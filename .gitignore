@@ -2,6 +2,9 @@ build/
 dist/
 out/
 tests/out/
+demo/out/
+benchmarks/out/
+.dist/
 *.obj
 *.o
 *.a

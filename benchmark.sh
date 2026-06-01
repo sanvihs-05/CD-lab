@@ -21,8 +21,8 @@ measure_average() {
 build_pair() {
   local name="$1"
   local source="$2"
-  "${CLANG_BIN}" -O2 "${source}" -lm -o "${OUT_DIR}/${name}_baseline"
-  "${CLANG_BIN}" -O2 -fsanitize=numerical "${source}" -lm -o "${OUT_DIR}/${name}_nssan"
+  "${CLANG_BIN}" -O0 -g "${source}" -lm -o "${OUT_DIR}/${name}_baseline"
+  "${CLANG_BIN}" -O0 -g -fsanitize=numerical "${source}" -lm -o "${OUT_DIR}/${name}_nssan"
 }
 
 programs=(

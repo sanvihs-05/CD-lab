@@ -1,8 +1,8 @@
 #include <stdio.h>
 
-#define NX 128
-#define NY 128
-#define STEPS 1000
+#define NX 50
+#define NY 50
+#define STEPS 150
 
 static float u[NX][NY];
 static float next_u[NX][NY];

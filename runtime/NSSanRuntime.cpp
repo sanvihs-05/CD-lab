@@ -1,6 +1,7 @@
 #include "nssan/NSSanRuntime.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -15,32 +16,58 @@
 
 namespace {
 
-struct RuntimeState {
-  std::mutex lock;
-  std::unordered_map<std::uintptr_t, double> shadows;
-  std::unordered_set<std::string> reported_locations;
+// Shadow storage: lock-free for single-threaded hot path,
+// mutex only for report deduplication (cold path).
+
+constexpr std::size_t kShadowSlots = 1u << 16; // 65536 slots
+struct ShadowEntry {
+  std::atomic<std::uintptr_t> addr{0};
+  std::atomic<double> value{0.0};
+};
+
+static ShadowEntry g_shadow_table[kShadowSlots];
+
+static std::size_t shadow_index(std::uintptr_t key) {
+  // Simple hash — mix bits and mask to table size.
+  key ^= key >> 16;
+  key *= 0x45d9f3b;
+  key ^= key >> 16;
+  return key & (kShadowSlots - 1);
+}
+
+struct RuntimeConfig {
   double threshold = 1.0e-5;
   bool halt_on_error = false;
 };
 
-RuntimeState &state() {
-  static RuntimeState instance;
+struct ReportState {
+  std::mutex lock;
+  std::unordered_set<std::string> reported_locations;
+};
+
+RuntimeConfig &config() {
+  static RuntimeConfig instance;
   static std::once_flag once;
   std::call_once(once, [] {
-    RuntimeState &runtime = instance;
+    RuntimeConfig &cfg = instance;
 
     if (const char *raw = std::getenv("NSSAN_THRESHOLD")) {
       char *end = nullptr;
       const double parsed = std::strtod(raw, &end);
       if (end != raw && std::isfinite(parsed) && parsed > 0.0) {
-        runtime.threshold = parsed;
+        cfg.threshold = parsed;
       }
     }
 
     if (const char *halt = std::getenv("NSSAN_HALT_ON_ERROR")) {
-      runtime.halt_on_error = std::strcmp(halt, "0") != 0;
+      cfg.halt_on_error = std::strcmp(halt, "0") != 0;
     }
   });
+  return instance;
+}
+
+ReportState &report_state() {
+  static ReportState instance;
   return instance;
 }
 
@@ -90,12 +117,12 @@ void emitReport(const char *file,
                 float result,
                 double shadow,
                 double err) {
-  RuntimeState &runtime = state();
+  ReportState &rs = report_state();
   const std::string key = locationKey(file, line, column, op_name);
 
   {
-    std::lock_guard<std::mutex> guard(runtime.lock);
-    if (!runtime.reported_locations.insert(key).second) {
+    std::lock_guard<std::mutex> guard(rs.lock);
+    if (!rs.reported_locations.insert(key).second) {
       return;
     }
   }
@@ -119,7 +146,7 @@ void emitReport(const char *file,
   std::cerr << message.str();
   std::cerr.flush();
 
-  if (runtime.halt_on_error) {
+  if (config().halt_on_error) {
     std::abort();
   }
 }
@@ -131,10 +158,10 @@ extern "C" void __nssan_shadow_store(const void *addr, double shadow) {
     return;
   }
 
-  RuntimeState &runtime = state();
   const auto key = reinterpret_cast<std::uintptr_t>(addr);
-  std::lock_guard<std::mutex> guard(runtime.lock);
-  runtime.shadows[key] = shadow;
+  const std::size_t idx = shadow_index(key);
+  g_shadow_table[idx].addr.store(key, std::memory_order_relaxed);
+  g_shadow_table[idx].value.store(shadow, std::memory_order_relaxed);
 }
 
 extern "C" double __nssan_shadow_load(const void *addr, float current) {
@@ -142,13 +169,10 @@ extern "C" double __nssan_shadow_load(const void *addr, float current) {
     return static_cast<double>(current);
   }
 
-  RuntimeState &runtime = state();
   const auto key = reinterpret_cast<std::uintptr_t>(addr);
-
-  std::lock_guard<std::mutex> guard(runtime.lock);
-  auto it = runtime.shadows.find(key);
-  if (it != runtime.shadows.end()) {
-    return it->second;
+  const std::size_t idx = shadow_index(key);
+  if (g_shadow_table[idx].addr.load(std::memory_order_relaxed) == key) {
+    return g_shadow_table[idx].value.load(std::memory_order_relaxed);
   }
   return static_cast<double>(current);
 }
@@ -159,21 +183,21 @@ extern "C" void __nssan_check_float_op(float result,
                                        std::uint32_t line,
                                        std::uint32_t column,
                                        const char *op_name) {
-  RuntimeState &runtime = state();
+  const RuntimeConfig &cfg = config();
 
   if (!std::isfinite(result) || !std::isfinite(shadow)) {
     emitReport(file, line, column, op_name, result, shadow, std::numeric_limits<double>::infinity());
     return;
   }
 
-  const double abs_tolerance = absoluteTolerance(runtime.threshold);
+  const double abs_tolerance = absoluteTolerance(cfg.threshold);
   const double diff = std::fabs(static_cast<double>(result) - shadow);
   if (diff <= abs_tolerance) {
     return;
   }
 
   const double err = relativeError(result, shadow, abs_tolerance);
-  if (err > runtime.threshold) {
+  if (err > cfg.threshold) {
     emitReport(file, line, column, op_name, result, shadow, err);
   }
 }

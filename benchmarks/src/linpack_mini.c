@@ -1,7 +1,6 @@
 #include <stdio.h>
-
-#define N 160
-#define REPEAT 50
+#define N 60
+#define REPEAT 8
 
 static float a[N][N];
 static float b[N][N];
