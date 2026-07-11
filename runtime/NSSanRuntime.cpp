@@ -35,6 +35,41 @@ static std::size_t shadow_index(std::uintptr_t key) {
   return key & (kShadowSlots - 1);
 }
 
+// --- Run summary counters -------------------------------------------------
+// Relaxed atomics updated on the hot path; the totals are printed once at
+// program exit by printRunSummary() (registered via std::atexit).
+std::atomic<std::uint64_t> g_checks_total{0};
+std::atomic<std::uint64_t> g_issue_cancel{0};
+std::atomic<std::uint64_t> g_issue_divergence{0};
+std::atomic<std::uint64_t> g_issue_nan{0};
+std::atomic<std::uint64_t> g_issue_inf{0};
+
+void printRunSummary() {
+  const std::uint64_t checks = g_checks_total.load(std::memory_order_relaxed);
+  const std::uint64_t cancel = g_issue_cancel.load(std::memory_order_relaxed);
+  const std::uint64_t divergence = g_issue_divergence.load(std::memory_order_relaxed);
+  const std::uint64_t nan_count = g_issue_nan.load(std::memory_order_relaxed);
+  const std::uint64_t inf_count = g_issue_inf.load(std::memory_order_relaxed);
+  const std::uint64_t total = cancel + divergence + nan_count + inf_count;
+
+  std::ostringstream out;
+  out << "=== NSSan SUMMARY ===\n"
+      << "  Float operations checked: " << checks << '\n'
+      << "  Numerical issues found:   " << total << " unique site(s)\n";
+  if (total > 0) {
+    if (cancel > 0)     out << "    Catastrophic Cancellation: " << cancel << '\n';
+    if (divergence > 0) out << "    Numerical Divergence:      " << divergence << '\n';
+    if (nan_count > 0)  out << "    NaN propagation:           " << nan_count << '\n';
+    if (inf_count > 0)  out << "    Infinity propagation:      " << inf_count << '\n';
+    out << "  Result: ISSUES DETECTED\n";
+  } else {
+    out << "  Result: CLEAN (no numerical issues detected)\n";
+  }
+
+  std::cerr << out.str();
+  std::cerr.flush();
+}
+
 struct RuntimeConfig {
   double threshold = 1.0e-5;
   bool halt_on_error = false;
@@ -62,6 +97,9 @@ RuntimeConfig &config() {
     if (const char *halt = std::getenv("NSSAN_HALT_ON_ERROR")) {
       cfg.halt_on_error = std::strcmp(halt, "0") != 0;
     }
+
+    // Print a one-line verdict + issue breakdown when the program exits.
+    std::atexit(printRunSummary);
   });
   return instance;
 }
@@ -80,6 +118,20 @@ double relativeError(float result, double shadow, double abs_tolerance) {
   const double diff = std::fabs(promoted - shadow);
   const double denom = std::max(std::fabs(shadow), abs_tolerance);
   return diff / denom;
+}
+
+// Estimate how many of float's ~7.2 significant decimal digits (24-bit
+// mantissa) were destroyed, given a relative error. A relative error of `err`
+// leaves about -log10(err) correct digits; the rest are lost.
+double significantDigitsLost(double err) {
+  if (!(err > 0.0) || !std::isfinite(err)) {
+    return 0.0;
+  }
+  const double correct_digits = -std::log10(err);
+  double lost = 7.2 - correct_digits;
+  if (lost < 0.0) lost = 0.0;
+  if (lost > 7.2) lost = 7.2;
+  return lost;
 }
 
 std::string locationKey(const char *file,
@@ -127,9 +179,20 @@ void emitReport(const char *file,
     }
   }
 
+  const char *type = issueType(result, shadow, op_name);
+  if (std::strcmp(type, "Catastrophic Cancellation") == 0) {
+    g_issue_cancel.fetch_add(1, std::memory_order_relaxed);
+  } else if (std::strcmp(type, "NaN propagation") == 0) {
+    g_issue_nan.fetch_add(1, std::memory_order_relaxed);
+  } else if (std::strcmp(type, "Infinity propagation") == 0) {
+    g_issue_inf.fetch_add(1, std::memory_order_relaxed);
+  } else {
+    g_issue_divergence.fetch_add(1, std::memory_order_relaxed);
+  }
+
   std::ostringstream message;
   message << "=== NUMERICAL SANITIZER: ERROR ===\n"
-          << "  Type:     " << issueType(result, shadow, op_name) << '\n'
+          << "  Type:     " << type << '\n'
           << "  Location: " << (file == nullptr ? "<unknown>" : file) << ':' << line
           << ':' << column << '\n'
           << "  Operation: " << (op_name == nullptr ? "<unknown>" : op_name) << '\n'
@@ -138,7 +201,9 @@ void emitReport(const char *file,
 
   if (std::isfinite(err)) {
     message << "  error:    " << std::scientific << err
-            << "x threshold exceeded\n";
+            << "x threshold exceeded\n"
+            << "  precision: ~" << std::fixed << std::setprecision(1)
+            << significantDigitsLost(err) << " of 7.2 significant digits lost\n";
   } else {
     message << "  error:    non-finite value encountered\n";
   }
@@ -184,6 +249,7 @@ extern "C" void __nssan_check_float_op(float result,
                                        std::uint32_t column,
                                        const char *op_name) {
   const RuntimeConfig &cfg = config();
+  g_checks_total.fetch_add(1, std::memory_order_relaxed);
 
   if (!std::isfinite(result) || !std::isfinite(shadow)) {
     emitReport(file, line, column, op_name, result, shadow, std::numeric_limits<double>::infinity());

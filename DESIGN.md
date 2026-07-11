@@ -92,7 +92,7 @@ Rather than requiring manual `-fplugin=... -Xlinker ...` flags, NSSan patches th
 - Uses MPFR for arbitrary-precision shadow execution
 - Extremely accurate but ~100× runtime overhead
 - Requires Valgrind infrastructure (not available on all platforms)
-- **Our advantage**: NSSan achieves 2–5× overhead with sufficient detection for common instabilities
+- **Our advantage**: NSSan achieves ~6.4× overhead (measured, debug builds) with sufficient detection for common instabilities — roughly 15× faster than Herbgrind
 
 ### FPChecker (LLVM-based)
 

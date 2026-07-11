@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NSSan — Live Playground</title>
+<style>
+  :root {
+    --ground:#0a0e17; --surface:#0f1521; --surface-2:#141d2c; --surface-3:#182338;
+    --border:#223049; --border-soft:#1a2537; --ink:#e9eef8; --ink-2:#9fb1cd; --muted:#647794;
+    --accent:#4fd1e0; --accent-ink:#0a0e17;
+    --clean:#4fbf6a; --divergence:#e6ab34; --cancel:#f26d3d; --nan:#a78bfa; --inf:#45b4e6;
+    --font-mono:'Cascadia Code','JetBrains Mono',ui-monospace,'SF Mono',Consolas,Menlo,monospace;
+    --font-sans:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    --radius:12px;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --ground:#eaeef6; --surface:#fff; --surface-2:#f4f7fc; --surface-3:#eaf0f8;
+      --border:#d5deec; --border-soft:#e4ebf5; --ink:#16202f; --ink-2:#44566e; --muted:#6a7a91;
+      --accent:#0d92a8; --accent-ink:#fff;
+      --clean:#2f9e46; --divergence:#b7770c; --cancel:#d9531f; --nan:#7c50d6; --inf:#1f8fd1; }
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-sans);line-height:1.55;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 22px;}
+  header{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--ground) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--border-soft);}
+  .head-in{display:flex;align-items:center;gap:14px;padding:12px 22px;max-width:1180px;margin:0 auto;}
+  .logo{font-family:var(--font-mono);font-weight:700;font-size:16px;}
+  .logo b{color:var(--accent);}
+  .sub{font-family:var(--font-mono);font-size:11px;color:var(--muted);letter-spacing:.06em;}
+  .status{margin-left:auto;display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:12px;color:var(--ink-2);}
+  .status .dot{width:9px;height:9px;border-radius:50%;background:var(--muted);}
+  .status .dot.ready{background:var(--clean);box-shadow:0 0 0 3px color-mix(in srgb,var(--clean) 22%,transparent);}
+  .status .dot.busy{background:var(--divergence);animation:pulse 1s infinite;}
+  @keyframes pulse{50%{opacity:.35;}}
+
+  .intro{padding:26px 0 10px;}
+  .intro h1{font-size:clamp(22px,3.4vw,30px);margin:0 0 6px;letter-spacing:-.01em;}
+  .intro p{margin:0;color:var(--ink-2);max-width:74ch;font-size:15px;}
+  .intro code{font-family:var(--font-mono);font-size:.88em;background:var(--surface-2);border:1px solid var(--border-soft);padding:1px 6px;border-radius:5px;}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:22px 0 40px;align-items:start;}
+  @media (max-width:900px){.grid{grid-template-columns:1fr;}}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;}
+  .card-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border-soft);background:var(--surface-2);}
+  .card-bar .t{font-family:var(--font-mono);font-size:12px;color:var(--muted);}
+  .lights{display:flex;gap:6px;}
+  .lights i{width:11px;height:11px;border-radius:50%;display:block;}
+  .lights i:nth-child(1){background:var(--cancel);opacity:.85;}
+  .lights i:nth-child(2){background:var(--divergence);opacity:.85;}
+  .lights i:nth-child(3){background:var(--clean);opacity:.85;}
+
+  .presets{display:flex;flex-wrap:wrap;gap:7px;padding:12px 14px;border-bottom:1px solid var(--border-soft);}
+  .preset{font-family:var(--font-mono);font-size:12px;padding:5px 11px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--ink-2);cursor:pointer;}
+  .preset:hover{border-color:var(--accent);color:var(--ink);}
+  .preset .g{margin-right:6px;font-weight:700;}
+  .preset .n{color:var(--muted);margin-right:5px;}
+  .preset.cat-cancel .g{color:var(--cancel);}
+  .preset.cat-div .g{color:var(--divergence);}
+  .preset.cat-nan .g{color:var(--nan);}
+  .preset.cat-inf .g{color:var(--inf);}
+  .preset.cat-clean .g{color:var(--clean);}
+  .presets{max-height:none;}
+
+  textarea{width:100%;border:0;background:var(--surface);color:var(--ink);font-family:var(--font-mono);font-size:13px;line-height:1.6;padding:14px 16px;resize:vertical;min-height:340px;outline:none;tab-size:2;}
+  textarea:focus{background:color-mix(in srgb,var(--surface) 92%,var(--accent) 4%);}
+
+  .controls{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--border-soft);flex-wrap:wrap;}
+  .run{font-family:var(--font-mono);font-size:13px;font-weight:700;letter-spacing:.02em;background:var(--accent);color:var(--accent-ink);border:0;padding:9px 18px;border-radius:9px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;}
+  .run:hover{filter:brightness(1.08);}
+  .run:disabled{opacity:.5;cursor:default;}
+  .run .spin{width:13px;height:13px;border:2px solid color-mix(in srgb,var(--accent-ink) 40%,transparent);border-top-color:var(--accent-ink);border-radius:50%;animation:sp .7s linear infinite;display:none;}
+  .run.loading .spin{display:inline-block;}
+  @keyframes sp{to{transform:rotate(360deg);}}
+  .toggle{display:inline-flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:12px;color:var(--ink-2);cursor:pointer;user-select:none;}
+  .toggle input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;}
+  .toggle input[type=text]{width:62px;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);font-family:var(--font-mono);font-size:12px;padding:3px 6px;border-radius:6px;outline:none;}
+  .toggle input[type=text]:focus{border-color:var(--accent);}
+  .hint{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-left:auto;}
+
+  .term{min-height:340px;}
+  .term-out{font-family:var(--font-mono);font-size:12.5px;line-height:1.6;padding:14px 16px;white-space:pre-wrap;word-break:break-word;overflow-x:auto;margin:0;color:var(--ink-2);}
+  .ph{display:inline-block;font-family:var(--font-mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:999px;margin:8px 0 4px;}
+  .ph.compile{background:color-mix(in srgb,var(--cancel) 16%,transparent);color:var(--cancel);border:1px solid color-mix(in srgb,var(--cancel) 40%,transparent);}
+  .ph.run{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);}
+  .l-err{color:var(--cancel);font-weight:700;}
+  .l-cancel{color:var(--cancel);}
+  .l-loc{color:var(--accent);}
+  .l-shadow{color:var(--clean);}
+  .l-key{color:var(--muted);}
+  .l-verdict-bad{color:var(--cancel);font-weight:700;}
+  .l-verdict-good{color:var(--clean);font-weight:700;}
+  .l-result{color:var(--ink);font-weight:600;}
+  .empty{color:var(--muted);padding:14px 16px;font-family:var(--font-mono);font-size:12.5px;}
+</style>
+</head>
+<body>
+<header>
+  <div class="head-in">
+    <span class="logo">NS<b>San</b></span>
+    <span class="sub">live playground</span>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting…</span></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="intro">
+    <h1>Run NSSan on your own code</h1>
+    <p>Edit the C below (or pick a preset), then <b>Run</b>. It compiles through the real patched Clang with <code>-fsanitize=numerical</code> inside Docker and streams back the genuine sanitizer report — the same toolchain the test suite uses.</p>
+  </section>
+
+  <div class="grid">
+    <!-- editor -->
+    <div class="card">
+      <div class="card-bar"><span class="lights"><i></i><i></i><i></i></span><span class="t">snippet.c</span></div>
+      <div class="presets" id="presets">
+        <button class="preset cat-div"    data-k="t01" data-thr="1e-5"><span class="n">t01</span><span class="g">~</span>quadratic</button>
+        <button class="preset cat-div"    data-k="t02" data-thr="1e-5"><span class="n">t02</span><span class="g">~</span>naive sum</button>
+        <button class="preset cat-clean"  data-k="t03" data-thr="1e-5"><span class="n">t03</span><span class="g">✓</span>Kahan</button>
+        <button class="preset cat-div"    data-k="t04" data-thr="1e-5"><span class="n">t04</span><span class="g">~</span>dot product</button>
+        <button class="preset cat-inf"    data-k="t05" data-thr="1e-5"><span class="n">t05</span><span class="g">∞</span>exp overflow</button>
+        <button class="preset cat-nan"    data-k="t06" data-thr="1e-5"><span class="n">t06</span><span class="g">N</span>sqrt(−ε)</button>
+        <button class="preset cat-cancel" data-k="t07" data-thr="1e-5"><span class="n">t07</span><span class="g">▲</span>Horner</button>
+        <button class="preset cat-div"    data-k="t08" data-thr="1e-5"><span class="n">t08</span><span class="g">~</span>ill-cond</button>
+        <button class="preset cat-cancel" data-k="t09" data-thr="1e-5"><span class="n">t09</span><span class="g">▲</span>stiff Euler</button>
+        <button class="preset cat-clean"  data-k="t10" data-thr="1e-5"><span class="n">t10</span><span class="g">✓</span>baseline</button>
+        <button class="preset cat-div"    data-k="t11" data-thr="1e-8"><span class="n">t11</span><span class="g">~</span>FMA (1e-8)</button>
+        <button class="preset cat-cancel" data-k="t12" data-thr="1e-5"><span class="n">t12</span><span class="g">▲</span>1 − cos</button>
+      </div>
+      <textarea id="code" spellcheck="false"></textarea>
+      <div class="controls">
+        <button class="run" id="runBtn"><span class="spin"></span><span>Run with NSSan</span></button>
+        <label class="toggle"><input type="checkbox" id="sanitize" checked> instrument</label>
+        <label class="toggle" title="Relative-error threshold (NSSAN_THRESHOLD)">thr <input type="text" id="threshold" value="1e-5" spellcheck="false"></label>
+        <span class="hint">Ctrl/⌘ + Enter</span>
+      </div>
+    </div>
+
+    <!-- output -->
+    <div class="card">
+      <div class="card-bar"><span class="t">$ output</span></div>
+      <div class="term">
+        <div class="empty" id="empty">Hit <b>Run</b> to compile and execute. First run warms the toolchain and may take a few seconds.</div>
+        <pre class="term-out" id="out" style="display:none"></pre>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const PRESETS = {
+  t01:
+`/* t01 quadratic_near_double_root -- expect: Numerical Divergence */
+#include <math.h>
+#include <stdio.h>
+
+static volatile float sink;
+
+int main(void) {
+  const float a = 1.0f;
+  const float b = 100000000.0f;
+  const float c = 1.0f;
+
+  const float disc = sqrtf((b * b) - (4.0f * a * c));
+  const float root = (-b + disc) / (2.0f * a);   /* -b + disc cancels */
+
+  sink = root;
+  printf("%.9g\\n", sink);
+  return 0;
+}`,
+  t02:
+`/* t02 naive_sum_1e7 -- expect: Numerical Divergence */
+#include <stdio.h>
+
+static volatile float sink;
+
+int main(void) {
+  float sum = 0.0f;
+  for (int i = 0; i < 1000000; ++i)
+    sum += 0.000001f;            /* accumulation drift */
+  sink = sum;
+  printf("%.9g\\n", sink);
+  return 0;
+}`,
+  t03:
+`/* t03 kahan_sum_1e7 -- expect: CLEAN (true negative) */
+#include <stdio.h>
+
+static volatile float sink;
+
+int main(void) {
+  float sum = 0.0f;
+  float c = 0.0f;
+  for (int i = 0; i < 16384; ++i) {
+    const float term = 0.0009765625f;
+    const float y = term - c;    /* compensated summation */
+    const float t = sum + y;
+    c = (t - sum) - y;
+    sum = t;
+  }
+  sink = sum;
+  printf("%.9g\\n", sink);
+  return 0;
+}`,
+  t04:
+`/* t04 dot_product_float -- expect: Numerical Divergence */
+#include <stdio.h>
+
+static volatile float sink;
+
+int main(void) {
+  volatile float big = 100000000.0f;
+  volatile float unit = 1.0f;
+  float acc = 0.0f;
+  for (int i = 0; i < 200000; ++i) {
+    acc += big * unit;
+    acc += unit * unit;          /* swallowed by big */
+    acc += (-big) * unit;
+  }
+  sink = acc;
+  printf("%.9g\\n", sink);
+  return 0;
+}`,
+  t05:
+`/* t05 exp_series_overflow -- expect: Infinity propagation */
+#include <stdio.h>
+
+static volatile float sink;
+
+int main(void) {
+  float value = 1.0f;
+  for (int i = 0; i < 16; ++i)
+    value = value * 100000.0f;   /* overflows to +Inf */
+  sink = value + 1.0f;
+  printf("%.9g\\n", sink);
+  return 0;
+}`,
+  t06:
+`/* t06 sqrt_negative_eps -- expect: NaN propagation */
+#include <math.h>
+#include <stdio.h>
+
+static volatile float sink;
+
+int main(void) {
+  const float eps = 1.0e-8f;
+  const float value = sqrtf(-eps);  /* NaN */
+  sink = value + 1.0f;
+  printf("%.9g\\n", sink);
+  return 0;
+}`,
+  t07:
+`/* t07 horner_vs_naive_poly -- expect: Catastrophic Cancellation */
+#include <stdio.h>
+
+static volatile float sink;
+
+int main(void) {
+  volatile float x = 1.00001f;
+  const float naive =
+      (x * x * x * x * x) - (5.0f * x * x * x * x) + (10.0f * x * x * x) -
+      (10.0f * x * x) + (5.0f * x) - 1.0f;
+  const float horner =
+      ((((x - 5.0f) * x + 10.0f) * x - 10.0f) * x + 5.0f) * x - 1.0f;
+  sink = naive - horner;
+  printf("%.9g\\n", sink);
+  return 0;
+}`,
+  t08:
+`/* t08 matrix_ill_cond -- expect: Numerical Divergence */
+#include <stdio.h>
+
+static volatile float sink;
+
+int main(void) {
+  volatile float eps = 0.0001f;
+  const float a = 1.0f + eps;
+  const float b = 1.0f;
+  const float c = 1.0f;
+  const float d = 1.0f - eps;
+  const float det = (a * d) - (b * c);   /* ill-conditioned */
+  sink = det;
+  printf("%.9g\\n", sink);
+  return 0;
+}`,
+  t09:
+`/* t09 stokes_euler -- expect: Catastrophic Cancellation */
+#include <stdio.h>
+
+static volatile float sink;
+
+int main(void) {
+  volatile float h = 0.0001f;
+  float y = 100000000.0f;
+  for (int i = 0; i < 100000; ++i)
+    y = y + h * 1.0f;            /* small step absorbed by large y */
+  sink = y - 100000000.0f;
+  printf("%.9g\\n", sink);
+  return 0;
+}`,
+  t10:
+`/* t10 no_cancel_baseline -- expect: CLEAN (true negative) */
+#include <stdio.h>
+
+static volatile float sink;
+
+int main(void) {
+  float sum = 0.0f;
+  for (int i = 0; i < 16; ++i)
+    sum += 0.25f;                /* exact in float */
+  sink = sum * 2.0f;
+  printf("%.9g\\n", sink);
+  return 0;
+}`,
+  t11:
+`/* t11 fnmadd_fused -- expect: Numerical Divergence (threshold 1e-8) */
+#include <math.h>
+#include <stdio.h>
+
+static volatile float sink;
+
+int main(void) {
+  volatile float a = -765488.9375f;
+  volatile float b = 712668.625f;
+  volatile float c = -554176086016.0f;
+  sink = fmaf(a, b, c);          /* fused rounding differs */
+  printf("%.9g\\n", sink);
+  return 0;
+}`,
+  t12:
+`/* t12 catastrophic_1minus_cos -- expect: Catastrophic Cancellation */
+#include <math.h>
+#include <stdio.h>
+
+static volatile float sink;
+
+int main(void) {
+  const float x = 0.001f;
+  sink = 1.0f - cosf(x);         /* 1 - cos(small x) */
+  printf("%.9g\\n", sink);
+  return 0;
+}`
+};
+
+const code = document.getElementById('code');
+const out = document.getElementById('out');
+const empty = document.getElementById('empty');
+const runBtn = document.getElementById('runBtn');
+const dot = document.getElementById('dot');
+const statusText = document.getElementById('statusText');
+const sanitize = document.getElementById('sanitize');
+const threshold = document.getElementById('threshold');
+
+code.value = PRESETS.t12;
+
+document.getElementById('presets').addEventListener('click', (e) => {
+  const b = e.target.closest('.preset'); if (!b) return;
+  code.value = PRESETS[b.dataset.k] || '';
+  if (b.dataset.thr) threshold.value = b.dataset.thr;
+  code.focus();
+});
+
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+function classify(line){
+  const t = line.trim();
+  if (/^=== .*ERROR ===/.test(t)) return 'l-err';
+  if (/^=== NSSan SUMMARY ===/.test(t)) return 'l-err';
+  if (/Catastrophic Cancellation|Numerical Divergence|NaN propagation|Infinity propagation/.test(t) && /Type:/.test(t)) return 'l-cancel';
+  if (/^Location:/.test(t)) return 'l-loc';
+  if (/^shadow:/.test(t)) return 'l-shadow';
+  if (/ISSUES DETECTED/.test(t)) return 'l-verdict-bad';
+  if (/CLEAN/.test(t)) return 'l-verdict-good';
+  if (/^Result:/.test(t)) return 'l-result';
+  if (/^(Type|Operation|float|error|precision|Float operations|Numerical issues):/.test(t)) return 'l-key';
+  return '';
+}
+
+function render(raw){
+  const lines = raw.split('\n');
+  let html = '';
+  for (let line of lines){
+    if (line.startsWith('@@PHASE:compile-error')){ html += '<span class="ph compile">compile error</span>\n'; continue; }
+    if (line.startsWith('@@PHASE:run')){ html += '<span class="ph run">program output</span>\n'; continue; }
+    if (line.startsWith('@@EXIT:')){ const c=line.slice(7).trim(); html += '<span class="l-key">[exit code '+esc(c)+']</span>\n'; continue; }
+    if (line.startsWith('@@TIMEOUT')){ html += '<span class="l-err">'+esc(line.slice(2))+'</span>\n'; continue; }
+    const cls = classify(line);
+    html += cls ? '<span class="'+cls+'">'+esc(line)+'</span>\n' : esc(line)+'\n';
+  }
+  empty.style.display='none';
+  out.style.display='block';
+  out.innerHTML = html.replace(/\n$/,'');
+}
+
+let busy = false;
+async function run(){
+  if (busy) return;
+  busy = true;
+  runBtn.classList.add('loading'); runBtn.disabled = true;
+  runBtn.querySelector('span:last-child').textContent = 'Running…';
+  empty.style.display='none'; out.style.display='block';
+  out.innerHTML = '<span class="l-key">Compiling and running in Docker…</span>';
+  try{
+    const res = await fetch('/run', {method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({code: code.value, sanitize: sanitize.checked, threshold: threshold.value})});
+    const data = await res.json();
+    render(data.output || '(no output)');
+  }catch(e){
+    out.innerHTML = '<span class="l-err">Could not reach the local server. Is it still running?</span>';
+  }finally{
+    busy = false;
+    runBtn.classList.remove('loading'); runBtn.disabled = false;
+    runBtn.querySelector('span:last-child').textContent = sanitize.checked ? 'Run with NSSan' : 'Run (no NSSan)';
+  }
+}
+runBtn.addEventListener('click', run);
+sanitize.addEventListener('change', ()=>{
+  runBtn.querySelector('span:last-child').textContent = sanitize.checked ? 'Run with NSSan' : 'Run (no NSSan)';
+});
+code.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter') run(); });
+
+async function poll(){
+  try{
+    const r = await fetch('/status'); const s = await r.json();
+    if (s.ready){ dot.className='dot ready'; statusText.textContent='toolchain ready'; }
+    else if (s.warming){ dot.className='dot busy'; statusText.textContent='warming up…'; setTimeout(poll,1500); }
+    else { dot.className='dot busy'; statusText.textContent='starting…'; setTimeout(poll,1500); }
+  }catch(e){ dot.className='dot'; statusText.textContent='server offline'; setTimeout(poll,2000); }
+}
+poll();
+</script>
+</body>
+</html>

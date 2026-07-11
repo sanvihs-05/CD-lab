@@ -174,14 +174,40 @@ The runtime classifies detected issues:
 ```
 === NUMERICAL SANITIZER: ERROR ===
   Type:     Catastrophic Cancellation
-  Location: ./demo/buggy.c:6:20
+  Location: ./demo/buggy.c:6:23
   Operation: fsub
-  float:    4.62532043e-08
-  shadow:   4.9999999583255429e-08
-  error:    7.4899279e-02x threshold exceeded
+  float:    0
+  shadow:   4.9999997475680402e-09
+  error:    1.00000000000000000e+00x threshold exceeded
+  precision: ~7.2 of 7.2 significant digits lost
 ```
 
+The `precision` line estimates how many of `float`'s ~7.2 significant decimal
+digits were destroyed: a relative error `e` leaves roughly `-log10(e)` correct
+digits, so digits lost ≈ `7.2 - (-log10(e))` (clamped to `[0, 7.2]`).
+
 Reports are **deduplicated** by `(file, line, column, opcode)` key — each unique site is reported at most once.
+
+### End-of-Run Summary
+
+The runtime registers `printRunSummary()` via `std::atexit` during one-time
+initialization. When the program exits it prints a verdict to `stderr`:
+
+```
+=== NSSan SUMMARY ===
+  Float operations checked: 2
+  Numerical issues found:   1 unique site(s)
+    Catastrophic Cancellation: 1
+  Result: ISSUES DETECTED
+```
+
+Counters are namespace-scope `std::atomic<uint64_t>` updated with relaxed
+ordering on the hot path: `g_checks_total` is bumped on every check, and the
+per-category issue counters (`g_issue_cancel`, `g_issue_divergence`,
+`g_issue_nan`, `g_issue_inf`) are bumped once per **unique** reported site
+(after deduplication). On clean programs the verdict is
+`CLEAN (no numerical issues detected)` — so the tool reports success itself
+rather than relying on the demo wrapper.
 
 ## Clang Driver Integration
 

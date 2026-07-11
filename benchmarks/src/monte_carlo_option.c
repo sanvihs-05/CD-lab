@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define PATHS 200000
+#define PATHS 1500000
 #define STEPS 24
 
 static uint32_t state = 2463534242u;

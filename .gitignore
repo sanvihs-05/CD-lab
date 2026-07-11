@@ -3,6 +3,7 @@ dist/
 out/
 tests/out/
 demo/out/
+demo/live/
 benchmarks/out/
 .dist/
 *.obj

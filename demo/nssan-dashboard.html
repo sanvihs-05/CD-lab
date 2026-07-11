@@ -1,0 +1,685 @@
+<title>NSSan — Numerical Stability Sanitizer</title>
+<style>
+  :root {
+    --ground: #0a0e17;
+    --surface: #0f1521;
+    --surface-2: #141d2c;
+    --surface-3: #182338;
+    --border: #223049;
+    --border-soft: #1a2537;
+    --ink: #e9eef8;
+    --ink-2: #9fb1cd;
+    --muted: #647794;
+    --accent: #4fd1e0;
+    --accent-ink: #0a0e17;
+    --clean: #4fbf6a;
+    --divergence: #e6ab34;
+    --cancel: #f26d3d;
+    --nan: #a78bfa;
+    --inf: #45b4e6;
+    --shadow-lg: 0 20px 50px -20px rgba(0,0,0,0.7);
+    --radius: 12px;
+    --font-mono: 'Cascadia Code','JetBrains Mono',ui-monospace,'SF Mono',Consolas,Menlo,monospace;
+    --font-sans: system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ground: #eaeef6;
+      --surface: #ffffff;
+      --surface-2: #f4f7fc;
+      --surface-3: #eaf0f8;
+      --border: #d5deec;
+      --border-soft: #e4ebf5;
+      --ink: #16202f;
+      --ink-2: #44566e;
+      --muted: #6a7a91;
+      --accent: #0d92a8;
+      --accent-ink: #ffffff;
+      --clean: #2f9e46;
+      --divergence: #b7770c;
+      --cancel: #d9531f;
+      --nan: #7c50d6;
+      --inf: #1f8fd1;
+      --shadow-lg: 0 18px 40px -24px rgba(30,50,80,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0a0e17; --surface: #0f1521; --surface-2: #141d2c; --surface-3: #182338;
+    --border: #223049; --border-soft: #1a2537; --ink: #e9eef8; --ink-2: #9fb1cd;
+    --muted: #647794; --accent: #4fd1e0; --accent-ink: #0a0e17;
+    --clean: #4fbf6a; --divergence: #e6ab34; --cancel: #f26d3d; --nan: #a78bfa; --inf: #45b4e6;
+    --shadow-lg: 0 20px 50px -20px rgba(0,0,0,0.7);
+  }
+  :root[data-theme="light"] {
+    --ground: #eaeef6; --surface: #ffffff; --surface-2: #f4f7fc; --surface-3: #eaf0f8;
+    --border: #d5deec; --border-soft: #e4ebf5; --ink: #16202f; --ink-2: #44566e;
+    --muted: #6a7a91; --accent: #0d92a8; --accent-ink: #ffffff;
+    --clean: #2f9e46; --divergence: #b7770c; --cancel: #d9531f; --nan: #7c50d6; --inf: #1f8fd1;
+    --shadow-lg: 0 18px 40px -24px rgba(30,50,80,0.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1140px; margin: 0 auto; padding: 0 24px; }
+
+  .mono { font-family: var(--font-mono); }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 14px;
+  }
+  h1, h2, h3 { text-wrap: balance; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ---- Top bar ---- */
+  header.topbar {
+    position: sticky; top: 0; z-index: 40;
+    background: color-mix(in srgb, var(--ground) 86%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .topbar-inner { display: flex; align-items: center; gap: 18px; padding: 12px 24px; max-width: 1140px; margin: 0 auto; }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand .logo {
+    font-family: var(--font-mono); font-weight: 700; letter-spacing: 0.04em;
+    font-size: 17px; color: var(--ink);
+  }
+  .brand .logo b { color: var(--accent); }
+  .brand .sub { font-family: var(--font-mono); font-size: 11px; color: var(--muted); letter-spacing: 0.08em; }
+  .verdict-pills { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.03em;
+    padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--ink-2); white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .pill b { color: var(--ink); font-weight: 700; }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--clean); box-shadow: 0 0 0 3px color-mix(in srgb, var(--clean) 22%, transparent); }
+  @media (max-width: 780px) { .verdict-pills { display: none; } }
+
+  /* ---- Hero ---- */
+  .hero { padding: 60px 0 30px; }
+  .hero h1 {
+    font-size: clamp(30px, 5vw, 48px); line-height: 1.06; margin: 0 0 18px;
+    letter-spacing: -0.015em; font-weight: 700;
+  }
+  .hero h1 .hl { color: var(--accent); }
+  .hero .lede { font-size: 18px; color: var(--ink-2); max-width: 60ch; margin: 0; }
+  .hero .lede code { font-family: var(--font-mono); font-size: 0.9em; background: var(--surface-2); padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border-soft); color: var(--ink); }
+
+  .split { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 22px; margin-top: 38px; align-items: start; }
+  @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+
+  /* Terminal card */
+  .terminal {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow-lg); overflow: hidden;
+  }
+  .term-bar {
+    display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+    border-bottom: 1px solid var(--border-soft); background: var(--surface-2);
+  }
+  .term-bar .lights { display: flex; gap: 6px; }
+  .term-bar .lights i { width: 11px; height: 11px; border-radius: 50%; display: block; background: var(--border); }
+  .term-bar .lights i:nth-child(1){ background: var(--cancel); opacity: .8; }
+  .term-bar .lights i:nth-child(2){ background: var(--divergence); opacity: .8; }
+  .term-bar .lights i:nth-child(3){ background: var(--clean); opacity: .8; }
+  .term-bar .title { font-family: var(--font-mono); font-size: 12px; color: var(--muted); margin-left: 4px; }
+  .term-body { padding: 16px 18px; font-family: var(--font-mono); font-size: 13px; line-height: 1.65; overflow-x: auto; }
+  .term-body pre { margin: 0; white-space: pre; }
+  .t-head { color: var(--cancel); font-weight: 700; }
+  .t-key { color: var(--muted); }
+  .t-cancel { color: var(--cancel); font-weight: 600; }
+  .t-loc { color: var(--accent); }
+  .t-float { color: var(--ink); }
+  .t-shadow { color: var(--clean); }
+  .t-dim { color: var(--muted); }
+  .t-verdict { color: var(--cancel); font-weight: 700; }
+
+  /* Reading panel */
+  .reading { display: flex; flex-direction: column; gap: 14px; }
+  .read-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px 18px;
+  }
+  .read-card h3 { margin: 0 0 6px; font-size: 13px; font-family: var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .read-card p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
+  .read-card p b { color: var(--ink); }
+  .vs {
+    display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: stretch; margin-top: 4px;
+  }
+  .vs .cell { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--surface-2); }
+  .vs .cell .lbl { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+  .vs .cell .val { font-family: var(--font-mono); font-size: 20px; font-weight: 700; }
+  .vs .float .val { color: var(--cancel); }
+  .vs .shadow .val { color: var(--clean); }
+  .vs .cell .note { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .vs .arrow { display: flex; align-items: center; color: var(--muted); font-family: var(--font-mono); font-size: 18px; }
+
+  /* Demo strip */
+  section.block { padding: 46px 0; border-top: 1px solid var(--border-soft); }
+  .block-head { margin-bottom: 26px; }
+  .block-head h2 { font-size: clamp(22px, 3.2vw, 30px); margin: 0 0 8px; letter-spacing: -0.01em; }
+  .block-head p { margin: 0; color: var(--ink-2); max-width: 68ch; font-size: 15.5px; }
+
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 820px) { .steps { grid-template-columns: 1fr; } }
+  .step {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;
+    display: flex; flex-direction: column; gap: 10px; position: relative;
+  }
+  .step .idx { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; color: var(--muted); text-transform: uppercase; }
+  .step .cmd { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 8px 10px; overflow-x: auto; white-space: nowrap; }
+  .step .cmd b { color: var(--accent); font-weight: 600; }
+  .step .outcome { font-size: 14px; color: var(--ink); }
+  .step .tag { align-self: flex-start; font-family: var(--font-mono); font-size: 11px; padding: 3px 9px; border-radius: 999px; letter-spacing: 0.04em; }
+  .tag.silent { background: color-mix(in srgb, var(--cancel) 16%, transparent); color: var(--cancel); border: 1px solid color-mix(in srgb, var(--cancel) 40%, transparent); }
+  .tag.caught { background: color-mix(in srgb, var(--divergence) 16%, transparent); color: var(--divergence); border: 1px solid color-mix(in srgb, var(--divergence) 40%, transparent); }
+  .tag.ok { background: color-mix(in srgb, var(--clean) 16%, transparent); color: var(--clean); border: 1px solid color-mix(in srgb, var(--clean) 40%, transparent); }
+
+  /* ---- Test matrix ---- */
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; align-items: center; }
+  .filters .flabel { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
+  .chip {
+    font-family: var(--font-mono); font-size: 12px; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 7px; transition: border-color .15s, color .15s, background .15s;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--ink); }
+  .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .chip .swatch { width: 8px; height: 8px; border-radius: 50%; }
+  .chip .count { opacity: .7; font-size: 11px; }
+  .chip:focus-visible, .theme-toggle:focus-visible, .test:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .test-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  @media (max-width: 760px) { .test-grid { grid-template-columns: 1fr; } }
+  .test {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px 16px 14px; cursor: pointer; text-align: left; color: inherit; font: inherit;
+    display: flex; flex-direction: column; gap: 10px; position: relative;
+    border-left: 3px solid var(--cat, var(--border)); transition: transform .12s ease, border-color .15s;
+  }
+  .test:hover { transform: translateY(-2px); }
+  .test.hidden { display: none; }
+  .test-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .test .tid { font-family: var(--font-mono); font-size: 12px; color: var(--muted); letter-spacing: 0.04em; }
+  .cat-chip {
+    font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.03em; padding: 3px 8px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+    color: var(--cat); background: color-mix(in srgb, var(--cat) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--cat) 38%, transparent);
+  }
+  .cat-chip .g { font-weight: 700; }
+  .test .src { font-family: var(--font-mono); font-size: 13.5px; color: var(--ink); word-break: break-all; }
+  .test .desc { font-size: 13px; color: var(--ink-2); margin: 0; }
+  .sev { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+  .sev-track { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+  .sev-fill { height: 100%; border-radius: 3px; background: var(--cat); width: 0; transition: width .5s ease; }
+  .sev-val { font-family: var(--font-mono); font-size: 11px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .test .detail { display: none; border-top: 1px dashed var(--border); margin-top: 4px; padding-top: 10px; }
+  .test.open .detail { display: block; }
+  .test.open { border-color: var(--cat); }
+  .detail dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 12.5px; }
+  .detail dt { font-family: var(--font-mono); color: var(--muted); letter-spacing: 0.03em; }
+  .detail dd { margin: 0; color: var(--ink-2); font-family: var(--font-mono); }
+  .test .expand { position: absolute; top: 14px; right: 14px; color: var(--muted); font-family: var(--font-mono); font-size: 14px; }
+
+  .status-line { font-family: var(--font-mono); font-size: 13px; color: var(--ink-2); margin-top: 20px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); display: flex; gap: 18px; flex-wrap: wrap; }
+  .status-line b { color: var(--clean); }
+
+  /* ---- Benchmark ---- */
+  .bench-grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 22px; align-items: start; }
+  @media (max-width: 860px) { .bench-grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; }
+  .panel h3 { margin: 0 0 4px; font-size: 14px; font-family: var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .panel .sub { font-size: 12.5px; color: var(--muted); margin: 0 0 18px; }
+  .bar-row { display: grid; grid-template-columns: 116px 1fr; gap: 12px; align-items: center; margin-bottom: 16px; }
+  .bar-row .name { font-family: var(--font-mono); font-size: 12.5px; color: var(--ink-2); }
+  .bar-outer { position: relative; height: 30px; }
+  .bar-track { position: absolute; inset: 0; background: var(--surface-3); border-radius: 6px; }
+  .bar-fill {
+    position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; width: 0;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 70%, transparent), var(--accent));
+    display: flex; align-items: center; justify-content: flex-end; padding-right: 9px;
+    transition: width .7s cubic-bezier(.2,.7,.2,1);
+  }
+  .bar-fill .bv { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--accent-ink); }
+  .bar-row .base { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+
+  .compare .cbar { margin-bottom: 20px; }
+  .compare .cbar .clab { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 12px; margin-bottom: 6px; }
+  .compare .cbar .clab .who { color: var(--ink); }
+  .compare .cbar .clab .amt { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .compare .track { height: 12px; background: var(--surface-3); border-radius: 6px; overflow: hidden; }
+  .compare .fill { height: 100%; border-radius: 6px; width: 0; transition: width .8s ease; }
+  .compare .nssan .fill { background: var(--clean); }
+  .compare .herb .fill { background: var(--cancel); }
+  .compare .takeaway { font-size: 14px; color: var(--ink-2); margin: 6px 0 0; }
+  .compare .takeaway b { color: var(--clean); }
+
+  /* ---- Pipeline ---- */
+  .pipe { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; align-items: stretch; }
+  @media (max-width: 900px) { .pipe { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 520px) { .pipe { grid-template-columns: 1fr; } }
+  .pstep { background: var(--surface); border: 1px solid var(--border); padding: 18px; position: relative; }
+  .pipe .pstep:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+  .pipe .pstep:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+  @media (max-width: 900px) { .pipe .pstep { border-radius: 10px !important; } }
+  .pstep .pn { font-family: var(--font-mono); font-size: 11px; color: var(--accent); letter-spacing: 0.1em; }
+  .pstep h4 { margin: 8px 0 6px; font-size: 15px; font-family: var(--font-mono); }
+  .pstep p { margin: 0; font-size: 13px; color: var(--ink-2); }
+  .ops { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 22px; }
+  .op { font-family: var(--font-mono); font-size: 12px; padding: 4px 9px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); color: var(--ink-2); }
+  .op.hi { border-color: color-mix(in srgb, var(--accent) 50%, transparent); color: var(--accent); }
+
+  footer { padding: 40px 0 60px; border-top: 1px solid var(--border-soft); color: var(--muted); font-size: 13px; }
+  footer .mono { color: var(--ink-2); }
+
+  .theme-toggle {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--ink-2);
+    padding: 6px 11px; border-radius: 999px; cursor: pointer; margin-left: 4px;
+  }
+  .theme-toggle:hover { border-color: var(--accent); color: var(--ink); }
+
+  /* tooltip */
+  #tt {
+    position: fixed; pointer-events: none; z-index: 90; background: var(--surface-3);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px; font-family: var(--font-mono);
+    font-size: 12px; color: var(--ink); box-shadow: var(--shadow-lg); opacity: 0; transition: opacity .12s; max-width: 240px;
+  }
+  #tt .tt-k { color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="logo">NS<b>San</b></span>
+      <span class="sub">numerical stability sanitizer</span>
+    </div>
+    <div class="verdict-pills">
+      <span class="pill"><span class="dot"></span><b>12/12</b> tests</span>
+      <span class="pill"><b>0</b> false positives</span>
+      <span class="pill"><b>6.4×</b> overhead</span>
+      <button class="theme-toggle" id="themeBtn" aria-label="Toggle color theme">Theme</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- HERO -->
+  <section class="hero">
+    <p class="eyebrow">LLVM sanitizer · float→double shadow execution</p>
+    <h1>AddressSanitizer catches memory bugs.<br><span class="hl">NSSan catches the numbers going wrong.</span></h1>
+    <p class="lede">A compiler sanitizer that re-runs every <code>float</code> operation in <code>double</code> precision, compares the two, and reports — with file, line and column — exactly where precision silently collapses. Turn it on like any sanitizer: <code>clang -fsanitize=numerical</code>.</p>
+
+    <div class="split">
+      <!-- real diagnostic -->
+      <div class="terminal" aria-label="NSSan diagnostic output for buggy.c">
+        <div class="term-bar">
+          <span class="lights"><i></i><i></i><i></i></span>
+          <span class="title">$ ./buggy_san &nbsp;— &nbsp;1.0f - cosf(0.0001f)</span>
+        </div>
+        <div class="term-body"><pre><span class="t-head">=== NUMERICAL SANITIZER: ERROR ===</span>
+  <span class="t-key">Type:     </span><span class="t-cancel">Catastrophic Cancellation</span>
+  <span class="t-key">Location: </span><span class="t-loc">demo/buggy.c:6:23</span>
+  <span class="t-key">Operation:</span> fsub
+  <span class="t-key">float:    </span><span class="t-float">0</span>
+  <span class="t-key">shadow:   </span><span class="t-shadow">4.9999997475680402e-09</span>
+  <span class="t-key">error:    </span>1.00000000e+00x threshold exceeded
+  <span class="t-key">precision:</span> <span class="t-dim">~7.2 of 7.2 significant digits lost</span>
+
+<span class="t-head">=== NSSan SUMMARY ===</span>
+  <span class="t-key">Float operations checked:</span> 2
+  <span class="t-key">Numerical issues found:  </span> 1 unique site(s)
+    Catastrophic Cancellation: 1
+  <span class="t-key">Result: </span><span class="t-verdict">ISSUES DETECTED</span></pre></div>
+      </div>
+
+      <!-- plain reading -->
+      <div class="reading">
+        <div class="read-card">
+          <h3>What just happened</h3>
+          <p><b>1.0f − cosf(0.0001f)</b> should be ≈ 5×10⁻⁹. But in <code>float</code> the cosine rounds to exactly 1.0, so the subtraction annihilates every digit — the program returns <b>0</b> and exits without complaint.</p>
+        </div>
+        <div class="read-card">
+          <h3>float vs. shadow</h3>
+          <div class="vs">
+            <div class="cell float">
+              <div class="lbl">float (32-bit)</div>
+              <div class="val num">0</div>
+              <div class="note">completely wrong</div>
+            </div>
+            <div class="arrow">≠</div>
+            <div class="cell shadow">
+              <div class="lbl">double shadow</div>
+              <div class="val num">5.0e-9</div>
+              <div class="note">the real answer</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEMO -->
+  <section class="block">
+    <div class="block-head">
+      <h2>The three-step demo</h2>
+      <p>The same bug, told three ways — silent without the tool, caught with it, and a clean baseline that proves NSSan doesn't cry wolf.</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <span class="idx">01 · without NSSan</span>
+        <span class="cmd">clang -g buggy.c</span>
+        <span class="outcome"><b>Result: 0</b> — a plausible-looking, totally wrong answer. Nothing warns you.</span>
+        <span class="tag silent">SILENT BUG</span>
+      </div>
+      <div class="step">
+        <span class="idx">02 · with NSSan</span>
+        <span class="cmd">clang -g <b>-fsanitize=numerical</b> buggy.c</span>
+        <span class="outcome">Catastrophic cancellation pinpointed at <span class="mono">buggy.c:6:23</span> with the float/shadow divergence.</span>
+        <span class="tag caught">CAUGHT</span>
+      </div>
+      <div class="step">
+        <span class="idx">03 · clean baseline</span>
+        <span class="cmd">clang -g -fsanitize=numerical clean.c</span>
+        <span class="outcome"><b>Result: 0.75</b> — <span class="mono">0.25f + 0.5f</span> is exact, so NSSan reports <b>CLEAN</b>.</span>
+        <span class="tag ok">NO FALSE POSITIVE</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- TEST MATRIX -->
+  <section class="block">
+    <div class="block-head">
+      <h2>The 12-case test suite</h2>
+      <p>Ten known-buggy programs it must catch, and two numerically-stable ones it must stay silent on — each a distinct class of instability. Filter by category, or click a case for detail.</p>
+    </div>
+
+    <div class="filters" id="filters">
+      <span class="flabel">Filter</span>
+    </div>
+
+    <div class="test-grid" id="testGrid"></div>
+
+    <div class="status-line">
+      <span>Results: <b>12 / 12 passed</b></span>
+      <span>True positives: <b>10</b></span>
+      <span>True negatives: <b>2</b></span>
+      <span>False positives: <b>0</b></span>
+    </div>
+  </section>
+
+  <!-- BENCHMARK -->
+  <section class="block">
+    <div class="block-head">
+      <h2>Fast enough to leave on</h2>
+      <p>Shadow execution in <code>double</code> — not arbitrary-precision MPFR — keeps overhead low enough for a normal edit-compile-test loop. Measured at <code>-O0 -g</code>, averaged over three runs.</p>
+    </div>
+    <div class="bench-grid">
+      <div class="panel">
+        <h3>Instrumentation overhead</h3>
+        <p class="sub">Slowdown vs. the un-instrumented baseline · lower is better</p>
+        <div id="benchBars"></div>
+      </div>
+      <div class="panel compare">
+        <h3>vs. Herbgrind</h3>
+        <p class="sub">The closest comparable tool, on a shared scale</p>
+        <div class="cbar nssan">
+          <div class="clab"><span class="who">NSSan</span><span class="amt">~6.4×</span></div>
+          <div class="track"><div class="fill" data-w="6.4"></div></div>
+        </div>
+        <div class="cbar herb">
+          <div class="clab"><span class="who">Herbgrind (MPFR)</span><span class="amt">~100×</span></div>
+          <div class="track"><div class="fill" data-w="100"></div></div>
+        </div>
+        <p class="takeaway">Roughly <b>15× faster</b> than Herbgrind, with detection broad enough for everyday numerical bugs.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="block">
+    <div class="block-head">
+      <h2>How it works</h2>
+      <p>An LLVM IR pass shadows each covered <code>float</code> operation; a small runtime library compares the results and reports divergence beyond a configurable threshold (default <code>1e-5</code>).</p>
+    </div>
+    <div class="pipe">
+      <div class="pstep">
+        <div class="pn">STEP 1</div>
+        <h4>Source → IR</h4>
+        <p>Clang lowers your <code>.c</code> to LLVM IR. <code>-fsanitize=numerical</code> auto-loads the pass and links the runtime.</p>
+      </div>
+      <div class="pstep">
+        <div class="pn">STEP 2</div>
+        <h4>Build shadow</h4>
+        <p>For each float value the pass keeps a <code>double</code> shadow in a <span class="mono">DenseMap&lt;Value*,Value*&gt;</span>.</p>
+      </div>
+      <div class="pstep">
+        <div class="pn">STEP 3</div>
+        <h4>Replay in double</h4>
+        <p>The operation runs again in <code>double</code> — the ~16-digit answer the ~7-digit float ought to have produced.</p>
+      </div>
+      <div class="pstep">
+        <div class="pn">STEP 4</div>
+        <h4>Compare &amp; report</h4>
+        <p>The runtime checks relative error, classifies the issue, dedupes by site, and prints a verdict at exit.</p>
+      </div>
+    </div>
+    <div class="ops">
+      <span class="op hi">fadd</span><span class="op hi">fsub</span><span class="op hi">fmul</span><span class="op hi">fdiv</span>
+      <span class="op">load</span><span class="op">store</span>
+      <span class="op">sqrtf</span><span class="op">sinf</span><span class="op">cosf</span><span class="op">expf</span><span class="op">logf</span><span class="op">fmaf</span>
+    </div>
+  </section>
+
+  <footer>
+    <div>NSSan · LLVM 18.1.8 · <span class="mono">float→double</span> shadow execution · Assignment 21</div>
+    <div class="mono">Reproduce: <b>.\run.ps1</b> — runs the 12-case suite, the benchmark harness, and this demo.</div>
+  </footer>
+</main>
+
+<div id="tt"></div>
+
+<script>
+(function () {
+  // ---- data ----
+  var CATS = {
+    cancel:     { label: 'Cancellation', glyph: '▲', varname: '--cancel' },
+    divergence: { label: 'Divergence',   glyph: '~', varname: '--divergence' },
+    nan:        { label: 'NaN',          glyph: 'N', varname: '--nan' },
+    inf:        { label: 'Infinity',     glyph: '∞', varname: '--inf' },
+    clean:      { label: 'Clean (TN)',   glyph: '✓', varname: '--clean' }
+  };
+
+  var TESTS = [
+    { id:'t01', src:'quadratic_near_double_root', cat:'divergence', err:1.0, thr:'1e-5',
+      desc:'Quadratic formula with b=1e8 — the discriminant cancels in (−b + √(b²−4ac)).' },
+    { id:'t02', src:'naive_sum_1e7', cat:'divergence', err:1.00124562e-5, thr:'1e-5',
+      desc:'Summing 0.000001f a million times — accumulation drift pulls the total off.' },
+    { id:'t03', src:'kahan_sum_1e7', cat:'clean', err:0, thr:'1e-5',
+      desc:'Kahan compensated summation — error-corrected, so NSSan stays silent (true negative).' },
+    { id:'t04', src:'dot_product_float', cat:'divergence', err:1.0, thr:'1e-5',
+      desc:'Dot product with large ± terms that cancel — error swamps the small result.' },
+    { id:'t05', src:'exp_series_overflow', cat:'inf', err:null, thr:'1e-5',
+      desc:'Repeated ×100000 overflows to +Inf — infinity propagation caught immediately.' },
+    { id:'t06', src:'sqrt_negative_eps', cat:'nan', err:null, thr:'1e-5',
+      desc:'sqrtf(−1e-8) yields NaN — the not-a-number spreads through the computation.' },
+    { id:'t07', src:'horner_vs_naive_poly', cat:'cancel', err:1.0, thr:'1e-5',
+      desc:'Naive vs Horner evaluation of (x−1)^5 near x=1.00001 — naive form cancels.' },
+    { id:'t08', src:'matrix_ill_cond', cat:'divergence', err:1.0, thr:'1e-5',
+      desc:'2×2 determinant (1+ε)(1−ε) − 1 — an ill-conditioned cancellation in det.' },
+    { id:'t09', src:'stokes_euler', cat:'cancel', err:1.0, thr:'1e-5',
+      desc:'Forward Euler on a stiff ODE with y₀=1e8 — the small step is absorbed by the large state.' },
+    { id:'t10', src:'no_cancel_baseline', cat:'clean', err:0, thr:'1e-5',
+      desc:'Sum of 0.25f (exact in float) — stable arithmetic, no report (true negative).' },
+    { id:'t11', src:'fnmadd_fused', cat:'divergence', err:5.95906888e-8, thr:'1e-8',
+      desc:'fmaf(a,b,c) with large operands — fused rounding differs, caught at a tight 1e-8 threshold.' },
+    { id:'t12', src:'catastrophic_1minus_cos', cat:'cancel', err:4.63256947e-2, thr:'1e-5',
+      desc:'The classic 1 − cos(x) for small x — cancellation right next to 1.0.' }
+  ];
+
+  var BENCH = [
+    { name:'LINPACK',       base:0.325, inst:1.785, x:5.49 },
+    { name:'Monte Carlo',   base:0.318, inst:1.539, x:4.84 },
+    { name:'Navier-Stokes', base:0.252, inst:2.484, x:9.86 }
+  ];
+
+  // reference the CSS var itself so colors follow theme toggles
+  function catVar(cat){ return 'var(' + CATS[cat].varname + ')'; }
+
+  // severity: log-scaled ratio of error to threshold, mapped to 6..100%
+  function severity(t){
+    if (t.cat === 'clean') return { pct: 0, label: 'no divergence' };
+    if (t.err === null)    return { pct: 100, label: 'non-finite' };
+    var thr = parseFloat(t.thr);
+    var ratio = t.err / thr;
+    var lr = Math.log10(Math.max(ratio, 1));      // 0 .. ~5
+    var pct = Math.min(100, Math.max(8, (lr / 5) * 100));
+    // format error compactly
+    var e = t.err;
+    var lbl = e >= 1 ? '1.00e+00' : e.toExponential(2);
+    return { pct: pct, label: lbl + 'x' };
+  }
+
+  // ---- build filter chips ----
+  var counts = {};
+  TESTS.forEach(function(t){ counts[t.cat] = (counts[t.cat]||0)+1; });
+  var filters = document.getElementById('filters');
+  var order = ['cancel','divergence','nan','inf','clean'];
+  var activeFilter = 'all';
+
+  var allChip = mkChip('all', 'All', 12, null, true);
+  filters.appendChild(allChip);
+  order.forEach(function(cat){
+    if (!counts[cat]) return;
+    filters.appendChild(mkChip(cat, CATS[cat].label, counts[cat], catVar(cat), false));
+  });
+
+  function mkChip(key, label, count, color, pressed){
+    var b = document.createElement('button');
+    b.className = 'chip'; b.setAttribute('aria-pressed', pressed ? 'true':'false');
+    b.dataset.filter = key;
+    var sw = '';
+    if (color) sw = '<span class="swatch" style="background:'+color+'"></span>';
+    b.innerHTML = sw + '<span>'+label+'</span><span class="count">'+count+'</span>';
+    b.addEventListener('click', function(){ setFilter(key); });
+    return b;
+  }
+  function setFilter(key){
+    activeFilter = key;
+    Array.prototype.forEach.call(filters.querySelectorAll('.chip'), function(c){
+      c.setAttribute('aria-pressed', c.dataset.filter === key ? 'true' : 'false');
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.test'), function(el){
+      var show = key === 'all' || el.dataset.cat === key;
+      el.classList.toggle('hidden', !show);
+    });
+  }
+
+  // ---- build test cards ----
+  var grid = document.getElementById('testGrid');
+  TESTS.forEach(function(t){
+    var c = CATS[t.cat];
+    var col = catVar(t.cat);
+    var sev = severity(t);
+    var el = document.createElement('button');
+    el.className = 'test'; el.dataset.cat = t.cat;
+    el.style.setProperty('--cat', col);
+    el.setAttribute('aria-expanded','false');
+
+    var detection = t.cat === 'clean' ? 'clean — no report'
+                  : t.cat === 'nan'   ? 'NaN propagation'
+                  : t.cat === 'inf'   ? 'Infinity propagation'
+                  : t.cat === 'cancel'? 'Catastrophic Cancellation'
+                  : 'Numerical Divergence';
+
+    var sevHtml = t.cat === 'clean'
+      ? '<div class="sev"><div class="sev-track"></div><span class="sev-val">✓ silent</span></div>'
+      : '<div class="sev"><div class="sev-track"><span class="sev-fill" data-w="'+sev.pct+'"></span></div><span class="sev-val">'+sev.label+'</span></div>';
+
+    el.innerHTML =
+      '<span class="expand" aria-hidden="true">+</span>' +
+      '<div class="test-top">' +
+        '<span class="tid">'+t.id+'</span>' +
+        '<span class="cat-chip"><span class="g">'+c.glyph+'</span>'+c.label+'</span>' +
+      '</div>' +
+      '<div class="src">'+t.src+'.c</div>' +
+      '<p class="desc">'+t.desc+'</p>' +
+      sevHtml +
+      '<div class="detail"><dl>' +
+        '<dt>detects</dt><dd>'+detection+'</dd>' +
+        '<dt>threshold</dt><dd>'+t.thr+'</dd>' +
+        '<dt>expected</dt><dd>'+(t.cat==='clean'?'no report':'report')+'</dd>' +
+        '<dt>result</dt><dd style="color:var(--clean)">PASS</dd>' +
+      '</dl></div>';
+
+    el.addEventListener('click', function(){
+      var open = el.classList.toggle('open');
+      el.setAttribute('aria-expanded', open ? 'true':'false');
+      el.querySelector('.expand').textContent = open ? '–' : '+';
+    });
+    grid.appendChild(el);
+  });
+
+  // ---- benchmark bars ----
+  var maxX = 11.0;
+  var bench = document.getElementById('benchBars');
+  BENCH.forEach(function(b){
+    var row = document.createElement('div');
+    row.className = 'bar-row';
+    row.innerHTML =
+      '<span class="name">'+b.name+'</span>' +
+      '<div>' +
+        '<div class="bar-outer">' +
+          '<div class="bar-track"></div>' +
+          '<div class="bar-fill" data-w="'+(b.x/maxX*100)+'"><span class="bv">'+b.x.toFixed(2)+'×</span></div>' +
+        '</div>' +
+        '<div class="base">baseline '+b.base.toFixed(3)+'s → instrumented '+b.inst.toFixed(3)+'s</div>' +
+      '</div>';
+    row.addEventListener('mousemove', function(e){ showTip(e, b.name+'<br><span class="tt-k">baseline</span> '+b.base.toFixed(4)+'s<br><span class="tt-k">instrumented</span> '+b.inst.toFixed(4)+'s<br><span class="tt-k">overhead</span> '+b.x.toFixed(2)+'×'); });
+    row.addEventListener('mouseleave', hideTip);
+    bench.appendChild(row);
+  });
+
+  // ---- tooltip ----
+  var tt = document.getElementById('tt');
+  function showTip(e, html){ tt.innerHTML = html; tt.style.opacity = '1'; moveTip(e); }
+  function moveTip(e){
+    var x = e.clientX + 14, y = e.clientY + 14;
+    if (x + 250 > window.innerWidth) x = e.clientX - 250;
+    tt.style.left = x + 'px'; tt.style.top = y + 'px';
+  }
+  function hideTip(){ tt.style.opacity = '0'; }
+
+  // ---- animate bars in on load ----
+  requestAnimationFrame(function(){
+    requestAnimationFrame(function(){
+      document.querySelectorAll('.sev-fill').forEach(function(f){ f.style.width = f.dataset.w + '%'; });
+      document.querySelectorAll('.bar-fill').forEach(function(f){ f.style.width = f.dataset.w + '%'; });
+      document.querySelectorAll('.compare .fill').forEach(function(f){ f.style.width = Math.min(100, f.dataset.w) + '%'; });
+    });
+  });
+
+  // ---- theme toggle ----
+  var root = document.documentElement;
+  document.getElementById('themeBtn').addEventListener('click', function(){
+    var cur = root.getAttribute('data-theme');
+    if (!cur) cur = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    root.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
+  });
+})();
+</script>

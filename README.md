@@ -35,7 +35,7 @@ That's it. `.\run.ps1` executes the full 12-case test suite, 3-program benchmark
 |----------|----------|
 | [DESIGN.md](DESIGN.md) | Problem statement, shadow execution approach, design decisions, alternatives considered |
 | [IMPLEMENTATION.md](IMPLEMENTATION.md) | LLVM pass architecture, instrumented instructions, runtime library, Clang driver patches |
-| [EVALUATION.md](EVALUATION.md) | Test results (12/12 pass), benchmark overhead (~2.5×), tool comparison, failure case analysis |
+| [EVALUATION.md](EVALUATION.md) | Test results (12/12 pass), benchmark overhead (~6.4×), tool comparison, failure case analysis |
 
 ## What NSSan Detects
 
@@ -46,16 +46,26 @@ float result = 1.0f - cosf(0.0001f);  // cos ≈ 0.999999995 → subtraction kil
 
 **Without NSSan**: program silently returns a wrong result.
 
-**With NSSan** (`clang -fsanitize=numerical buggy.c`):
+**With NSSan** (`clang -g -fsanitize=numerical buggy.c`):
 ```
 === NUMERICAL SANITIZER: ERROR ===
   Type:     Catastrophic Cancellation
-  Location: ./demo/buggy.c:6:20
+  Location: ./demo/buggy.c:6:23
   Operation: fsub
-  float:    4.62532043e-08
-  shadow:   4.9999999583255429e-08
-  error:    7.4899279e-02x threshold exceeded
+  float:    0
+  shadow:   4.9999997475680402e-09
+  error:    1.00000000000000000e+00x threshold exceeded
+  precision: ~7.2 of 7.2 significant digits lost
+=== NSSan SUMMARY ===
+  Float operations checked: 2
+  Numerical issues found:   1 unique site(s)
+    Catastrophic Cancellation: 1
+  Result: ISSUES DETECTED
 ```
+
+Every run ends with an `=== NSSan SUMMARY ===` verdict printed by the runtime
+itself — `ISSUES DETECTED` with a per-category breakdown, or `CLEAN` when no
+divergence is found.
 
 ## How It Works
 
@@ -93,37 +103,45 @@ docker run --rm `
 **Step 1 — Compile and run `buggy.c` normally:**
 ```
 1. Compile normally
-$ /llvm-build/bin/clang ./demo/buggy.c -lm -o ./demo/out/buggy
+$ /llvm-build/bin/clang -g ./demo/buggy.c -lm -o ./demo/out/buggy
 $ ./demo/out/buggy
-Result: 4.62532043e-08
+Result: 0
 ```
-The program runs silently with a **wrong result** (true answer ≈ 5.0e-8).
+The program runs silently with a **wrong result** — `1.0f - cosf(0.0001f)` collapses
+to exactly `0` in `float` (true answer ≈ 5.0e-9), a total loss of precision.
 
 **Step 2 — Compile with NSSan (FAILURE CASE — expected):**
 ```
 2. Compile with NSSan
-$ /llvm-build/bin/clang -fsanitize=numerical ./demo/buggy.c -lm -o ./demo/out/buggy_san
+$ /llvm-build/bin/clang -g -fsanitize=numerical ./demo/buggy.c -lm -o ./demo/out/buggy_san
 $ ./demo/out/buggy_san
 === NUMERICAL SANITIZER: ERROR ===
   Type:     Catastrophic Cancellation
-  Location: ./demo/buggy.c:6:20
+  Location: ./demo/buggy.c:6:23
   Operation: fsub
-  float:    4.62532043e-08
-  shadow:   4.9999999583255429e-08
-  error:    7.4899279e-02x threshold exceeded
-Result: 4.62532043e-08
+  float:    0
+  shadow:   4.9999997475680402e-09
+  error:    1.00000000000000000e+00x threshold exceeded
+  precision: ~7.2 of 7.2 significant digits lost
+Result: 0
+=== NSSan SUMMARY ===
+  Float operations checked: 2
+  Numerical issues found:   1 unique site(s)
+    Catastrophic Cancellation: 1
+  Result: ISSUES DETECTED
 ```
-NSSan **catches the bug** and reports the location, operation, and error magnitude.
+NSSan **catches the bug** and reports the location, operation, and error magnitude —
+the `double` shadow retains the correct ~5e-9 answer while the `float` collapsed to 0.
 
 **Step 3 — Compile `clean.c` with NSSan (WORKING CASE):**
 ```
 3. Clean baseline
-$ /llvm-build/bin/clang -fsanitize=numerical ./demo/clean.c -o ./demo/out/clean_san
+$ /llvm-build/bin/clang -g -fsanitize=numerical ./demo/clean.c -o ./demo/out/clean_san
 $ ./demo/out/clean_san
 Result: 0.75
-[NSSan] No numerical issues detected.
 ```
-NSSan correctly produces **no false positives** on numerically stable code.
+`0.25f + 0.5f` is exact in `float` (both are powers of two), so NSSan stays silent —
+correctly producing **no false positives** on numerically stable code.
 
 ## Repository Layout
 
@@ -222,7 +240,7 @@ docker run --rm `
   nssan-test bash ./benchmark.sh
 ```
 
-**Geometric mean overhead: ~2.5× (vs Herbgrind's ~100×)**
+**Geometric mean overhead: ~6.4× (vs Herbgrind's ~100×) — roughly 15× faster than Herbgrind**
 
 ## Environment Variables
 

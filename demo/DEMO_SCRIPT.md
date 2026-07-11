@@ -52,15 +52,15 @@ docker run --rm -it \
 bash ./scripts/install-native-nssan.sh
 
 # Step 1: Normal compilation
-/llvm-build/bin/clang ./demo/buggy.c -lm -o ./demo/out/buggy
+/llvm-build/bin/clang -g ./demo/buggy.c -lm -o ./demo/out/buggy
 ./demo/out/buggy
 
 # Step 2: With NSSan
-/llvm-build/bin/clang -fsanitize=numerical ./demo/buggy.c -lm -o ./demo/out/buggy_san
+/llvm-build/bin/clang -g -fsanitize=numerical ./demo/buggy.c -lm -o ./demo/out/buggy_san
 ./demo/out/buggy_san
 
 # Step 3: Clean code with NSSan
-/llvm-build/bin/clang -fsanitize=numerical ./demo/clean.c -o ./demo/out/clean_san
+/llvm-build/bin/clang -g -fsanitize=numerical ./demo/clean.c -o ./demo/out/clean_san
 ./demo/out/clean_san
 ```
 
@@ -69,43 +69,54 @@ bash ./scripts/install-native-nssan.sh
 ### Step 1: Normal Compilation (Silent Bug)
 
 ```
-$ /llvm-build/bin/clang ./demo/buggy.c -lm -o ./demo/out/buggy
+$ /llvm-build/bin/clang -g ./demo/buggy.c -lm -o ./demo/out/buggy
 $ ./demo/out/buggy
-Result: 4.62532043e-08
+Result: 0
 ```
 
-The program computes `1.0f - cosf(0.0001f)`. The true answer is ≈ 5.0e-8, but the `float` result is 4.625e-8 — **~7.5% error** due to catastrophic cancellation. The program reports nothing; the bug is silent.
+The program computes `1.0f - cosf(0.0001f)`. The true answer is ≈ 5.0e-9, but in `float` the `cosf` result rounds to exactly `1.0`, so the subtraction collapses to **exactly 0** — a **100% error** from catastrophic cancellation. The program reports nothing; the bug is silent.
 
 ### Step 2: With NSSan — FAILURE CASE (Bug Detected ✅)
 
 ```
-$ /llvm-build/bin/clang -fsanitize=numerical ./demo/buggy.c -lm -o ./demo/out/buggy_san
+$ /llvm-build/bin/clang -g -fsanitize=numerical ./demo/buggy.c -lm -o ./demo/out/buggy_san
 $ ./demo/out/buggy_san
 === NUMERICAL SANITIZER: ERROR ===
   Type:     Catastrophic Cancellation
-  Location: ./demo/buggy.c:6:20
+  Location: ./demo/buggy.c:6:23
   Operation: fsub
-  float:    4.62532043e-08
-  shadow:   4.9999999583255429e-08
-  error:    7.4899279e-02x threshold exceeded
-Result: 4.62532043e-08
+  float:    0
+  shadow:   4.9999997475680402e-09
+  error:    1.00000000000000000e+00x threshold exceeded
+  precision: ~7.2 of 7.2 significant digits lost
+Result: 0
+=== NSSan SUMMARY ===
+  Float operations checked: 2
+  Numerical issues found:   1 unique site(s)
+    Catastrophic Cancellation: 1
+  Result: ISSUES DETECTED
 ```
 
 NSSan catches the cancellation and reports:
 - **Type**: Catastrophic Cancellation (subtraction of nearly equal values)
 - **Location**: exact file, line, and column
-- **Error**: the `float` value diverges from the `double` shadow by ~7.5%
+- **Error**: the `float` collapsed to 0 while the `double` shadow kept the correct ≈5e-9 (100% relative error)
+- **Precision**: all of float's ~7.2 significant digits were destroyed
+- **Summary**: an end-of-run verdict printed by the tool itself
 
 ### Step 3: Clean Code — WORKING CASE (No False Positive ✅)
 
 ```
-$ /llvm-build/bin/clang -fsanitize=numerical ./demo/clean.c -o ./demo/out/clean_san
+$ /llvm-build/bin/clang -g -fsanitize=numerical ./demo/clean.c -o ./demo/out/clean_san
 $ ./demo/out/clean_san
 Result: 0.75
-[NSSan] No numerical issues detected.
+=== NSSan SUMMARY ===
+  Float operations checked: 1
+  Numerical issues found:   0 unique site(s)
+  Result: CLEAN (no numerical issues detected)
 ```
 
-`clean.c` computes `0.25f + 0.5f`, which is exact in `float`. NSSan produces **no warnings** — confirming zero false positives on stable code.
+`clean.c` computes `0.25f + 0.5f`, which is exact in `float`. NSSan produces **no error reports** — and its own end-of-run summary confirms `CLEAN`, proving zero false positives on stable code.
 
 ## Full Test Suite
 
@@ -133,4 +144,4 @@ docker run --rm `
   nssan-test bash ./benchmark.sh
 ```
 
-**Expected**: Geometric mean overhead ~2.5× (vs Herbgrind's ~100×).
+**Expected**: Geometric mean overhead ~6.4× (vs Herbgrind's ~100×).

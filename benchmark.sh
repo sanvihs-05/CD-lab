@@ -11,7 +11,7 @@ mkdir -p "${OUT_DIR}"
 measure_average() {
   local output_file
   output_file="$(mktemp)"
-  for _ in 1 2 3; do
+  for _ in 1 2 3 4 5; do
     /usr/bin/time -f "%e" "$@" >/dev/null 2>>"${output_file}"
   done
   awk '{sum+=$1} END {printf "%.4f", sum/NR}' "${output_file}"
