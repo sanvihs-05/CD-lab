@@ -29,6 +29,52 @@ That's it. `.\run.ps1` executes the full 12-case test suite, 3-program benchmark
 .\run.ps1 demo     # Evaluator-facing demo only
 ```
 
+## Setup From Scratch (detailed)
+
+Start here if nothing is installed yet. Steps 1–4 are one-time; after that every
+run finishes in seconds because the compiled Clang is cached in a Docker volume.
+
+```powershell
+# 1. Install prerequisites (one-time)
+#    - Docker Desktop  -> https://www.docker.com/products/docker-desktop/  (must be RUNNING)
+#    - Git             -> https://git-scm.com/download/win
+#    - Node.js (only if you want the live playground) -> https://nodejs.org
+
+# 2. Clone this repository
+git clone https://github.com/sanvihs-05/CD-lab.git
+cd CD-lab
+
+# 3. Clone the LLVM 18.1.8 source next to it (one-time, ~200 MB)
+git clone --depth=1 --branch llvmorg-18.1.8 https://github.com/llvm/llvm-project.git C:\llvm-project
+
+# 4. Build the Docker image + patched Clang (first build ~20 min, cached afterwards)
+.\build.ps1
+
+# 5. Run everything: 12-case tests + benchmarks + evaluator demo
+.\run.ps1
+```
+
+**Verify it worked** — `.\run.ps1` should end with `Results: 12/12 passed | 2 true
+negatives | 0 false positives`, a benchmark table (~6.4× geometric mean), and the
+three-step demo (silent bug → caught → clean).
+
+### Interactive UIs (optional)
+
+```powershell
+# A. Static overview dashboard — no Docker needed, opens in any browser
+start demo\nssan-dashboard.html
+
+# B. Live playground — type C, run it through the real NSSan toolchain
+#    (needs Docker running + Node.js). Ctrl+C to stop. Opens http://localhost:7890
+.\demo\live.ps1
+```
+
+> **Troubleshooting**
+> - `docker ... cannot find the file specified` → Docker Desktop isn't running; start it and wait ~30s.
+> - `.ps1 cannot be loaded` (execution policy) → run `powershell -ExecutionPolicy Bypass -File .\run.ps1`.
+> - LLVM source not found → confirm it is at `C:\llvm-project` (or `%USERPROFILE%\llvm-project`).
+> - On Linux/macOS use `./build.sh` / `./run.sh` instead of the `.ps1` scripts.
+
 ## Documentation
 
 | Document | Contents |
