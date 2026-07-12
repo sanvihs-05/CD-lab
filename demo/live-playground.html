@@ -93,6 +93,30 @@
   .l-result{color:var(--ink);font-weight:600;}
   .empty{color:var(--muted);padding:14px 16px;font-family:var(--font-mono);font-size:12.5px;}
 
+  /* benchmark panel */
+  .benchwrap{margin:0 0 44px;}
+  .bench-inner{padding:18px 20px 22px;}
+  .bench-head{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:18px;}
+  .bench-head h2{font-size:18px;margin:0 0 4px;letter-spacing:-.01em;}
+  .bench-head p{margin:0;color:var(--ink-2);font-size:13px;max-width:60ch;}
+  .bench-head code{font-family:var(--font-mono);font-size:.85em;background:var(--surface-2);border:1px solid var(--border-soft);padding:1px 5px;border-radius:5px;}
+  .bench-run{margin-left:auto;font-family:var(--font-mono);font-size:12.5px;font-weight:700;background:var(--surface-2);color:var(--ink);border:1px solid var(--accent);padding:9px 15px;border-radius:9px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;}
+  .bench-run:hover{background:color-mix(in srgb,var(--accent) 14%,var(--surface-2));}
+  .bench-run:disabled{opacity:.55;cursor:default;}
+  .bench-run .spin{width:12px;height:12px;border:2px solid color-mix(in srgb,var(--accent) 35%,transparent);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;display:none;}
+  .bench-run.loading .spin{display:inline-block;}
+  .brow{display:grid;grid-template-columns:118px 1fr;gap:12px;align-items:center;margin-bottom:13px;}
+  .brow .bn{font-family:var(--font-mono);font-size:12.5px;color:var(--ink-2);}
+  .btrack{position:relative;height:28px;background:var(--surface-3);border-radius:6px;overflow:hidden;}
+  .bfill{position:absolute;left:0;top:0;bottom:0;border-radius:6px;width:0;background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 65%,transparent),var(--accent));display:flex;align-items:center;justify-content:flex-end;padding-right:9px;transition:width .6s cubic-bezier(.2,.7,.2,1);}
+  .bfill .bv{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--accent-ink);}
+  .bmeta{display:flex;gap:8px 20px;flex-wrap:wrap;align-items:center;margin-top:12px;font-family:var(--font-mono);font-size:12.5px;color:var(--ink-2);}
+  .bmeta .geo b{color:var(--accent);font-size:15px;}
+  .bmeta .tag{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted);}
+  .bmeta .tag.live{color:var(--clean);border-color:color-mix(in srgb,var(--clean) 45%,transparent);}
+  .bmeta .vs{color:var(--muted);}
+  .bmeta .vs b{color:var(--clean);}
+
   /* case info banner */
   .caseinfo{padding:13px 16px;border-bottom:1px solid var(--border-soft);background:var(--surface-2);}
   .caseinfo.cat-cancel{--cc:var(--cancel);} .caseinfo.cat-div{--cc:var(--divergence);}
@@ -164,6 +188,22 @@
         <div class="empty" id="empty">Hit <b>Run</b> to compile and execute. First run warms the toolchain and may take a few seconds.</div>
         <pre class="term-out" id="out" style="display:none"></pre>
       </div>
+    </div>
+  </div>
+
+  <!-- benchmark -->
+  <div class="card benchwrap">
+    <div class="card-bar"><span class="lights"><i></i><i></i><i></i></span><span class="t">performance overhead</span></div>
+    <div class="bench-inner">
+      <div class="bench-head">
+        <div>
+          <h2>Fast enough to leave on</h2>
+          <p>Each kernel compiled with and without <code>-fsanitize=numerical</code>; overhead is the slowdown. Lower is better.</p>
+        </div>
+        <button class="bench-run" id="benchBtn"><span class="spin"></span><span>Run benchmark live (~45s)</span></button>
+      </div>
+      <div id="benchBars"></div>
+      <div class="bmeta" id="benchMeta"></div>
     </div>
   </div>
 </main>
@@ -480,6 +520,58 @@ sanitize.addEventListener('change', ()=>{
   runBtn.querySelector('span:last-child').textContent = sanitize.checked ? 'Run with NSSan' : 'Run (no NSSan)';
 });
 code.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter') run(); });
+
+// ---- benchmark ----
+const BENCH_DEFAULT = { rows:[{n:'LINPACK',x:5.5},{n:'Monte Carlo',x:4.8},{n:'Navier-Stokes',x:9.9}], geo:6.4, live:false };
+const benchBars = document.getElementById('benchBars');
+const benchMeta = document.getElementById('benchMeta');
+const benchBtn = document.getElementById('benchBtn');
+const BMAX = 11;
+
+function renderBench(b){
+  benchBars.innerHTML = b.rows.map(r=>{
+    const w = Math.min(100, r.x / BMAX * 100);
+    return '<div class="brow"><span class="bn">'+r.n+'</span><div class="btrack"><div class="bfill" style="width:'+w+'%"><span class="bv">'+r.x.toFixed(2)+'×</span></div></div></div>';
+  }).join('');
+  const faster = Math.round(100 / b.geo);
+  benchMeta.innerHTML =
+    '<span class="geo">geo mean <b>'+b.geo.toFixed(2)+'×</b></span>'+
+    '<span class="vs">vs Herbgrind ~100× → <b>~'+faster+'× faster</b></span>'+
+    '<span class="tag'+(b.live?' live':'')+'">'+(b.live?'measured live':'reference')+'</span>';
+}
+
+function parseBench(text){
+  const rows = [];
+  ['LINPACK','Monte Carlo','Navier-Stokes'].forEach(name=>{
+    const re = new RegExp('^'+name.replace(/[-]/g,'\\-')+'\\s+([\\d.]+)s\\s+([\\d.]+)s\\s+([\\d.]+)x','m');
+    const m = text.match(re);
+    if (m) rows.push({n:name, base:+m[1], inst:+m[2], x:+m[3]});
+  });
+  const g = text.match(/Geometric mean overhead:\s*([\d.]+)x/);
+  return (rows.length === 3 && g) ? {rows, geo:+g[1], live:true} : null;
+}
+
+let benchBusy = false;
+async function runBench(){
+  if (benchBusy) return; benchBusy = true;
+  benchBtn.classList.add('loading'); benchBtn.disabled = true;
+  benchBtn.querySelector('span:last-child').textContent = 'Running… (~45s)';
+  try{
+    const res = await fetch('/bench', {method:'POST'});
+    const data = await res.json();
+    const parsed = parseBench(data.output || '');
+    if (parsed) renderBench(parsed);
+    else benchMeta.innerHTML = '<span class="vs">Could not read benchmark output — is Docker running?</span>';
+  }catch(e){
+    benchMeta.innerHTML = '<span class="vs">Benchmark request failed.</span>';
+  }finally{
+    benchBusy = false;
+    benchBtn.classList.remove('loading'); benchBtn.disabled = false;
+    benchBtn.querySelector('span:last-child').textContent = 'Run benchmark live (~45s)';
+  }
+}
+benchBtn.addEventListener('click', runBench);
+renderBench(BENCH_DEFAULT);
 
 async function poll(){
   try{

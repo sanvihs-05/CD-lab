@@ -122,6 +122,23 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && req.url === '/bench') {
+    (async () => {
+      try {
+        if (!ready) { await warmup(); }
+        if (!ready) return send(res, 200, 'application/json', JSON.stringify({ output: 'Toolchain not ready. Is Docker running?' }));
+        const r = await dockerRun('bash ./benchmark.sh 2>&1', 360000);
+        let out = r.stdout || '';
+        if (r.err && r.err.killed) out += '\n@@TIMEOUT (benchmark exceeded 6 min)';
+        else if (r.err && !out) out += String(r.err);
+        send(res, 200, 'application/json', JSON.stringify({ output: out }));
+      } catch (e) {
+        send(res, 200, 'application/json', JSON.stringify({ output: 'Server error: ' + e.message }));
+      }
+    })();
+    return;
+  }
+
   send(res, 404, 'text/plain', 'not found');
 });
 
