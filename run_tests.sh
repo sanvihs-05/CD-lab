@@ -15,18 +15,18 @@ reset="$(printf '\033[0m')"
 mkdir -p "${OUT_DIR}"
 
 cases=(
-  "t01_cancellation|quadratic_near_double_root|report|1e-5"
-  "t02_naive_sum|naive_sum_1e7|report|1e-5"
-  "t03_kahan|kahan_sum_1e7|clean|1e-5"
-  "t04_dot_product|dot_product_float|report|1e-5"
-  "t05_inf_propagation|exp_series_overflow|report|1e-5"
-  "t06_nan_sqrt|sqrt_negative_eps|report|1e-5"
-  "t07_horner_vs_naive|horner_vs_naive_poly|report|1e-5"
-  "t08_ill_conditioned|matrix_ill_cond|report|1e-5"
-  "t09_euler_stiff|stokes_euler|report|1e-5"
-  "t10_clean_baseline|no_cancel_baseline|clean|1e-5"
-  "t11_fma_rounding|fnmadd_fused|report|1e-8"
-  "t12_one_minus_cos|catastrophic_1minus_cos|report|1e-5"
+  "t01_cancellation|quadratic_near_double_root|report|1e-5|Quadratic roots: (-b + sqrt(b^2-4ac)) loses all digits when b is huge"
+  "t02_naive_sum|naive_sum_1e7|report|1e-5|Naive summation: adding 1e-6 a million times drifts from the true total"
+  "t03_kahan|kahan_sum_1e7|clean|1e-5|Kahan compensated summation stays accurate -> must stay CLEAN (true negative)"
+  "t04_dot_product|dot_product_float|report|1e-5|Dot product of large +/- terms that cancel down to a tiny result"
+  "t05_inf_propagation|exp_series_overflow|report|1e-5|Repeated *1e5 overflows the float to +Inf (infinity propagation)"
+  "t06_nan_sqrt|sqrt_negative_eps|report|1e-5|sqrt of a negative epsilon produces NaN (NaN propagation)"
+  "t07_horner_vs_naive|horner_vs_naive_poly|report|1e-5|Naive vs Horner form of (x-1)^5 near x=1: the naive form cancels"
+  "t08_ill_conditioned|matrix_ill_cond|report|1e-5|2x2 determinant (1+e)(1-e)-1: ill-conditioned cancellation"
+  "t09_euler_stiff|stokes_euler|report|1e-5|Forward Euler with huge y0: the tiny step h is absorbed by the state"
+  "t10_clean_baseline|no_cancel_baseline|clean|1e-5|Sum of 0.25 (exact in float) -> stable, must stay CLEAN (true negative)"
+  "t11_fma_rounding|fnmadd_fused|report|1e-8|fmaf rounding differs from separate mul+add (tight 1e-8 threshold)"
+  "t12_one_minus_cos|catastrophic_1minus_cos|report|1e-5|1 - cos(x) for small x: the classic cancellation right next to 1.0"
 )
 
 passed=0
@@ -35,7 +35,7 @@ true_negatives=0
 false_positives=0
 
 for entry in "${cases[@]}"; do
-  IFS='|' read -r case_id source_name expectation threshold <<<"${entry}"
+  IFS='|' read -r case_id source_name expectation threshold problem <<<"${entry}"
   src="${ROOT_DIR}/tests/smoke/${source_name}.c"
   bin="${OUT_DIR}/${case_id}"
   compile_log="${OUT_DIR}/${case_id}.compile.txt"
@@ -87,6 +87,8 @@ for entry in "${cases[@]}"; do
         "${red}" "${reset}" "${case_id}"
     fi
   fi
+
+  printf '       %s|_ %s%s\n' "${gray}" "${problem}" "${reset}"
 done
 
 printf '\n'
