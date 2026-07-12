@@ -92,6 +92,19 @@
   .l-verdict-good{color:var(--clean);font-weight:700;}
   .l-result{color:var(--ink);font-weight:600;}
   .empty{color:var(--muted);padding:14px 16px;font-family:var(--font-mono);font-size:12.5px;}
+
+  /* case info banner */
+  .caseinfo{padding:13px 16px;border-bottom:1px solid var(--border-soft);background:var(--surface-2);}
+  .caseinfo.cat-cancel{--cc:var(--cancel);} .caseinfo.cat-div{--cc:var(--divergence);}
+  .caseinfo.cat-nan{--cc:var(--nan);} .caseinfo.cat-inf{--cc:var(--inf);} .caseinfo.cat-clean{--cc:var(--clean);}
+  .caseinfo.custom{--cc:var(--muted);}
+  .ci-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:6px;}
+  .ci-id{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--ink);letter-spacing:.03em;}
+  .cat-chip{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.03em;padding:3px 9px;border-radius:999px;color:var(--cc);background:color-mix(in srgb,var(--cc) 15%,transparent);border:1px solid color-mix(in srgb,var(--cc) 38%,transparent);}
+  .cat-chip .g{font-weight:700;margin-right:4px;}
+  .ci-expect{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-left:auto;}
+  .ci-expect b{color:var(--cc);}
+  .ci-desc{margin:0;font-size:13.5px;color:var(--ink-2);line-height:1.5;}
 </style>
 </head>
 <body>
@@ -139,6 +152,14 @@
     <!-- output -->
     <div class="card">
       <div class="card-bar"><span class="t">$ output</span></div>
+      <div class="caseinfo" id="caseinfo">
+        <div class="ci-top">
+          <span class="ci-id" id="ciId">t12</span>
+          <span class="cat-chip" id="ciChip"><span class="g">▲</span>Cancellation</span>
+          <span class="ci-expect" id="ciExpect">expected: <b>Report</b></span>
+        </div>
+        <p class="ci-desc" id="ciDesc">1 − cos(x) for small x: the classic cancellation right next to 1.0</p>
+      </div>
       <div class="term">
         <div class="empty" id="empty">Hit <b>Run</b> to compile and execute. First run warms the toolchain and may take a few seconds.</div>
         <pre class="term-out" id="out" style="display:none"></pre>
@@ -342,6 +363,21 @@ int main(void) {
 }`
 };
 
+const META = {
+  t01:{cat:'div',   glyph:'~', label:'Divergence',   expect:'Report',                desc:'Quadratic roots: (−b + √(b²−4ac)) loses all digits when b is huge.'},
+  t02:{cat:'div',   glyph:'~', label:'Divergence',   expect:'Report',                desc:'Naive summation: adding 1e−6 a million times drifts from the true total.'},
+  t03:{cat:'clean', glyph:'✓', label:'Clean',   expect:'Clean (true negative)', desc:'Kahan compensated summation stays accurate — NSSan must stay silent.'},
+  t04:{cat:'div',   glyph:'~', label:'Divergence',   expect:'Report',                desc:'Dot product of large +/− terms that cancel down to a tiny result.'},
+  t05:{cat:'inf',   glyph:'∞', label:'Infinity',expect:'Report',                desc:'Repeated ×1e5 overflows the float to +Inf (infinity propagation).'},
+  t06:{cat:'nan',   glyph:'N', label:'NaN',          expect:'Report',                desc:'sqrt of a negative epsilon produces NaN (NaN propagation).'},
+  t07:{cat:'cancel',glyph:'▲', label:'Cancellation',expect:'Report',            desc:'Naive vs Horner form of (x−1)^5 near x=1: the naive form cancels.'},
+  t08:{cat:'div',   glyph:'~', label:'Divergence',   expect:'Report',                desc:'2×2 determinant (1+ε)(1−ε)−1: ill-conditioned cancellation.'},
+  t09:{cat:'cancel',glyph:'▲', label:'Cancellation',expect:'Report',            desc:'Forward Euler with huge y0: the tiny step h is absorbed by the state.'},
+  t10:{cat:'clean', glyph:'✓', label:'Clean',   expect:'Clean (true negative)', desc:'Sum of 0.25 (exact in float) — stable arithmetic, no divergence.'},
+  t11:{cat:'div',   glyph:'~', label:'Divergence',   expect:'Report',                desc:'fmaf rounding differs from a separate mul+add (tight 1e−8 threshold).'},
+  t12:{cat:'cancel',glyph:'▲', label:'Cancellation',expect:'Report',            desc:'1 − cos(x) for small x: the classic cancellation right next to 1.0.'}
+};
+
 const code = document.getElementById('code');
 const out = document.getElementById('out');
 const empty = document.getElementById('empty');
@@ -350,13 +386,39 @@ const dot = document.getElementById('dot');
 const statusText = document.getElementById('statusText');
 const sanitize = document.getElementById('sanitize');
 const threshold = document.getElementById('threshold');
+const caseinfo = document.getElementById('caseinfo');
+const ciId = document.getElementById('ciId');
+const ciChip = document.getElementById('ciChip');
+const ciExpect = document.getElementById('ciExpect');
+const ciDesc = document.getElementById('ciDesc');
 
+function updateInfo(key){
+  const m = META[key];
+  if (!m){
+    caseinfo.className = 'caseinfo custom';
+    ciId.textContent = 'custom';
+    ciChip.innerHTML = '<span class="g">·</span>your code';
+    ciExpect.innerHTML = '';
+    ciDesc.textContent = 'Edit the C on the left, then Run. Toggle "instrument" to compare with and without NSSan.';
+    return;
+  }
+  caseinfo.className = 'caseinfo cat-' + m.cat;
+  ciId.textContent = key;
+  ciChip.innerHTML = '<span class="g">'+m.glyph+'</span>'+m.label;
+  ciExpect.innerHTML = 'expected: <b>'+m.expect+'</b>';
+  ciDesc.textContent = m.desc;
+}
+
+let currentKey = 't12';
 code.value = PRESETS.t12;
+updateInfo('t12');
 
 document.getElementById('presets').addEventListener('click', (e) => {
   const b = e.target.closest('.preset'); if (!b) return;
+  currentKey = b.dataset.k;
   code.value = PRESETS[b.dataset.k] || '';
   if (b.dataset.thr) threshold.value = b.dataset.thr;
+  updateInfo(currentKey);
   code.focus();
 });
 
