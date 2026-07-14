@@ -200,7 +200,7 @@
           <h2>Fast enough to leave on</h2>
           <p>Each kernel compiled with and without <code>-fsanitize=numerical</code>; overhead is the slowdown. Lower is better.</p>
         </div>
-        <button class="bench-run" id="benchBtn"><span class="spin"></span><span>Run benchmark live (~45s)</span></button>
+        <button class="bench-run" id="benchBtn"><span class="spin"></span><span>Re-run benchmark live</span></button>
       </div>
       <div id="benchBars"></div>
       <div class="bmeta" id="benchMeta"></div>
@@ -522,56 +522,60 @@ sanitize.addEventListener('change', ()=>{
 code.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter') run(); });
 
 // ---- benchmark ----
-const BENCH_DEFAULT = { rows:[{n:'LINPACK',x:5.5},{n:'Monte Carlo',x:4.8},{n:'Navier-Stokes',x:9.9}], geo:6.4, live:false };
+const BENCH_DEFAULT = { rows:[{n:'LINPACK',x:5.05},{n:'Monte Carlo',x:5.04},{n:'Navier-Stokes',x:8.98}], geo:6.1 };
 const benchBars = document.getElementById('benchBars');
 const benchMeta = document.getElementById('benchMeta');
 const benchBtn = document.getElementById('benchBtn');
 const BMAX = 11;
 
-function renderBench(b){
+function renderBench(b, mode){
   benchBars.innerHTML = b.rows.map(r=>{
     const w = Math.min(100, r.x / BMAX * 100);
     return '<div class="brow"><span class="bn">'+r.n+'</span><div class="btrack"><div class="bfill" style="width:'+w+'%"><span class="bv">'+r.x.toFixed(2)+'×</span></div></div></div>';
   }).join('');
   const faster = Math.round(100 / b.geo);
+  let tag;
+  if (mode === 'live')        tag = '<span class="tag live">measured live</span>';
+  else if (mode === 'cached') {
+    const when = b.ts ? new Date(b.ts).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
+    tag = '<span class="tag live">measured · '+when+'</span>';
+  }
+  else tag = '<span class="tag">reference</span>';
   benchMeta.innerHTML =
     '<span class="geo">geo mean <b>'+b.geo.toFixed(2)+'×</b></span>'+
-    '<span class="vs">vs Herbgrind ~100× → <b>~'+faster+'× faster</b></span>'+
-    '<span class="tag'+(b.live?' live':'')+'">'+(b.live?'measured live':'reference')+'</span>';
+    '<span class="vs">vs Herbgrind ~100× → <b>~'+faster+'× faster</b></span>'+ tag;
 }
 
-function parseBench(text){
-  const rows = [];
-  ['LINPACK','Monte Carlo','Navier-Stokes'].forEach(name=>{
-    const re = new RegExp('^'+name.replace(/[-]/g,'\\-')+'\\s+([\\d.]+)s\\s+([\\d.]+)s\\s+([\\d.]+)x','m');
-    const m = text.match(re);
-    if (m) rows.push({n:name, base:+m[1], inst:+m[2], x:+m[3]});
-  });
-  const g = text.match(/Geometric mean overhead:\s*([\d.]+)x/);
-  return (rows.length === 3 && g) ? {rows, geo:+g[1], live:true} : null;
+// instant: show the cached measurement if the benchmark has ever been run here
+async function loadBench(){
+  try{
+    const res = await fetch('/bench');
+    const j = await res.json();
+    if (j.cached && j.data) { renderBench(j.data, 'cached'); return; }
+  }catch(e){ /* fall through to reference */ }
+  renderBench(BENCH_DEFAULT, 'reference');
 }
 
 let benchBusy = false;
 async function runBench(){
   if (benchBusy) return; benchBusy = true;
   benchBtn.classList.add('loading'); benchBtn.disabled = true;
-  benchBtn.querySelector('span:last-child').textContent = 'Running… (~45s)';
+  benchBtn.querySelector('span:last-child').textContent = 'Measuring…';
   try{
     const res = await fetch('/bench', {method:'POST'});
-    const data = await res.json();
-    const parsed = parseBench(data.output || '');
-    if (parsed) renderBench(parsed);
-    else benchMeta.innerHTML = '<span class="vs">Could not read benchmark output — is Docker running?</span>';
+    const j = await res.json();
+    if (j.data) renderBench(j.data, 'live');
+    else benchMeta.innerHTML = '<span class="vs">'+(j.error || 'Benchmark failed')+'</span>';
   }catch(e){
     benchMeta.innerHTML = '<span class="vs">Benchmark request failed.</span>';
   }finally{
     benchBusy = false;
     benchBtn.classList.remove('loading'); benchBtn.disabled = false;
-    benchBtn.querySelector('span:last-child').textContent = 'Run benchmark live (~45s)';
+    benchBtn.querySelector('span:last-child').textContent = 'Re-run benchmark live';
   }
 }
 benchBtn.addEventListener('click', runBench);
-renderBench(BENCH_DEFAULT);
+loadBench();
 
 async function poll(){
   try{

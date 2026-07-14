@@ -311,7 +311,7 @@
     <div class="verdict-pills">
       <span class="pill"><span class="dot"></span><b>12/12</b> tests</span>
       <span class="pill"><b>0</b> false positives</span>
-      <span class="pill"><b>6.4×</b> overhead</span>
+      <span class="pill"><b>6.1×</b> overhead</span>
       <button class="theme-toggle" id="themeBtn" aria-label="Toggle color theme">Theme</button>
     </div>
   </div>
@@ -439,8 +439,8 @@
         <h3>vs. Herbgrind</h3>
         <p class="sub">The closest comparable tool, on a shared scale</p>
         <div class="cbar nssan">
-          <div class="clab"><span class="who">NSSan</span><span class="amt">~6.4×</span></div>
-          <div class="track"><div class="fill" data-w="6.4"></div></div>
+          <div class="clab"><span class="who">NSSan</span><span class="amt">~6.1×</span></div>
+          <div class="track"><div class="fill" data-w="6.1"></div></div>
         </div>
         <div class="cbar herb">
           <div class="clab"><span class="who">Herbgrind (MPFR)</span><span class="amt">~100×</span></div>
@@ -533,9 +533,9 @@
   ];
 
   var BENCH = [
-    { name:'LINPACK',       base:0.325, inst:1.785, x:5.49 },
-    { name:'Monte Carlo',   base:0.318, inst:1.539, x:4.84 },
-    { name:'Navier-Stokes', base:0.252, inst:2.484, x:9.86 }
+    { name:'LINPACK',       base:0.217, inst:1.095, x:5.05 },
+    { name:'Monte Carlo',   base:0.188, inst:0.949, x:5.04 },
+    { name:'Navier-Stokes', base:0.162, inst:1.451, x:8.98 }
   ];
 
   // reference the CSS var itself so colors follow theme toggles

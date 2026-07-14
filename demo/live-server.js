@@ -18,6 +18,7 @@ const LLVM_PATH = process.env.LLVM_PATH || 'C:\\llvm-project';
 const LIVE_DIR = path.join(WORKSPACE, 'demo', 'live');
 const SNIPPET_C = path.join(LIVE_DIR, 'snippet.c');
 const PAGE = path.join(__dirname, 'live-playground.html');
+const BENCH_CACHE = path.join(LIVE_DIR, 'bench-cache.json');
 
 fs.mkdirSync(LIVE_DIR, { recursive: true });
 
@@ -82,6 +83,27 @@ async function compileAndRun(code, sanitize, threshold) {
   return out;
 }
 
+// Parse the benchmark.sh table into structured rows + geometric mean.
+function parseBenchOutput(text) {
+  const rows = [];
+  ['LINPACK', 'Monte Carlo', 'Navier-Stokes'].forEach((name) => {
+    const re = new RegExp('^' + name.replace(/-/g, '\\-') +
+      '\\s+([\\d.]+)s\\s+([\\d.]+)s\\s+([\\d.]+)x', 'm');
+    const m = text.match(re);
+    if (m) rows.push({ n: name, base: +m[1], inst: +m[2], x: +m[3] });
+  });
+  const g = text.match(/Geometric mean overhead:\s*([\d.]+)x/);
+  return (rows.length === 3 && g) ? { rows, geo: +g[1] } : null;
+}
+
+function readBenchCache() {
+  try { return JSON.parse(fs.readFileSync(BENCH_CACHE, 'utf8')); } catch (_) { return null; }
+}
+
+function writeBenchCache(obj) {
+  try { fs.writeFileSync(BENCH_CACHE, JSON.stringify(obj), 'utf8'); } catch (_) { /* non-fatal */ }
+}
+
 function send(res, code, type, body) {
   res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' });
   res.end(body);
@@ -122,18 +144,32 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // cached result: instant, no Docker run
+  if (req.method === 'GET' && req.url === '/bench') {
+    const c = readBenchCache();
+    send(res, 200, 'application/json', JSON.stringify(c ? { data: c, cached: true } : { cached: false }));
+    return;
+  }
+
+  // force a fresh measurement and refresh the cache
   if (req.method === 'POST' && req.url === '/bench') {
     (async () => {
       try {
         if (!ready) { await warmup(); }
-        if (!ready) return send(res, 200, 'application/json', JSON.stringify({ output: 'Toolchain not ready. Is Docker running?' }));
-        const r = await dockerRun('bash ./benchmark.sh 2>&1', 360000);
-        let out = r.stdout || '';
-        if (r.err && r.err.killed) out += '\n@@TIMEOUT (benchmark exceeded 6 min)';
-        else if (r.err && !out) out += String(r.err);
-        send(res, 200, 'application/json', JSON.stringify({ output: out }));
+        if (!ready) return send(res, 200, 'application/json', JSON.stringify({ error: 'Toolchain not ready. Is Docker running?' }));
+        // warmup() already installed the toolchain — skip the redundant re-check
+        const r = await dockerRun('NSSAN_SKIP_INSTALL=1 bash ./benchmark.sh 2>&1', 360000);
+        const out = r.stdout || '';
+        const parsed = parseBenchOutput(out);
+        if (!parsed) {
+          const why = (r.err && r.err.killed) ? 'benchmark timed out' : 'could not read benchmark output';
+          return send(res, 200, 'application/json', JSON.stringify({ error: why }));
+        }
+        parsed.ts = Date.now();
+        writeBenchCache(parsed);
+        send(res, 200, 'application/json', JSON.stringify({ data: parsed, cached: false }));
       } catch (e) {
-        send(res, 200, 'application/json', JSON.stringify({ output: 'Server error: ' + e.message }));
+        send(res, 200, 'application/json', JSON.stringify({ error: 'Server error: ' + e.message }));
       }
     })();
     return;

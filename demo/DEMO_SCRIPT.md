@@ -144,4 +144,4 @@ docker run --rm `
   nssan-test bash ./benchmark.sh
 ```
 
-**Expected**: Geometric mean overhead ~6.4× (vs Herbgrind's ~100×).
+**Expected**: Geometric mean overhead ~6.1× (vs Herbgrind's ~100×).

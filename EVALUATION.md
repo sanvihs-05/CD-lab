@@ -37,17 +37,17 @@ The full suite is executed by `./run_tests.sh` (or `./run.sh` which wraps it).
 
 ## Benchmark Overhead
 
-Three compute-intensive programs are compiled with and without `-fsanitize=numerical` at `-O0 -g` (debug mode — the realistic use case for sanitizers, matching ASan/UBSan workflows). Each is timed 5 runs and averaged. Workloads are sized so the baseline is well above process-startup noise, keeping the ratio stable. The benchmark harness is in `benchmark.sh`.
+Three compute-intensive programs are compiled with and without `-fsanitize=numerical` at `-O0 -g` (debug mode — the realistic use case for sanitizers, matching ASan/UBSan workflows). Each is timed 3 runs and averaged. Workloads are sized so the baseline is well above process-startup noise, keeping the ratio stable (repeat runs agree to within ~1%). The benchmark harness is in `benchmark.sh`.
 
 | Program | Description | Baseline | Instrumented | Overhead |
 |---------|-------------|----------|--------------|----------|
-| **LINPACK** | 60×60 dense matrix multiply (500 reps) | ~0.33s | ~1.79s | ~5.5× |
-| **Monte Carlo** | 1.5M-path option pricing (24 steps each) | ~0.32s | ~1.54s | ~4.8× |
-| **Navier-Stokes** | 50×50 grid, 12000 time steps | ~0.25s | ~2.48s | ~9.9× |
+| **LINPACK** | 60×60 dense matrix multiply (350 reps) | ~0.22s | ~1.10s | ~5.1× |
+| **Monte Carlo** | 1M-path option pricing (24 steps each) | ~0.19s | ~0.95s | ~5.0× |
+| **Navier-Stokes** | 50×50 grid, 8000 time steps | ~0.16s | ~1.45s | ~9.0× |
 
 | | |
 |---|---|
-| **Geometric mean overhead** | **~6.4×** |
+| **Geometric mean overhead** | **~6.1×** |
 
 > **Note**: Exact timings vary by hardware and Docker configuration. The overhead is per-operation shadow arithmetic plus a runtime check call, so float-dense kernels (Navier-Stokes) cost more than mixed ones. Herbgrind's ~100× overhead includes Valgrind's baseline JIT cost. Run `.\run.ps1 bench` to reproduce on your system.
 
@@ -55,14 +55,14 @@ Three compute-intensive programs are compiled with and without `-fsanitize=numer
 
 | Tool | Technique | Overhead | Detects Cancellation | Detects NaN/Inf | Source Location | Integration |
 |------|-----------|----------|---------------------|-----------------|-----------------|-------------|
-| **NSSan** (this project) | Shadow `float→double` via LLVM pass | **~6.4×** | ✅ Yes | ✅ Yes | ✅ File:line:col | `clang -fsanitize=numerical` |
+| **NSSan** (this project) | Shadow `float→double` via LLVM pass | **~6.1×** | ✅ Yes | ✅ Yes | ✅ File:line:col | `clang -fsanitize=numerical` |
 | **Herbgrind** | Shadow via MPFR (Valgrind) | ~100× | ✅ Yes | ✅ Yes | ⚠️ Limited | Valgrind command |
 | **FPChecker** | LLVM pass, checks NaN/Inf only | ~2× | ❌ No | ✅ Yes | ✅ Yes | Compiler plugin |
 | **Verrou** | Monte Carlo rounding (Valgrind) | ~5–10× | ⚠️ Statistical | ❌ No | ⚠️ Limited | Valgrind command |
 
 ### Key Advantages of NSSan
 
-1. **~15× faster than Herbgrind**: ~6.4× vs ~100× overhead, making it practical for development testing
+1. **~16× faster than Herbgrind**: ~6.1× vs ~100× overhead, making it practical for development testing
 2. **Broad detection**: Catches cancellation, drift, NaN, and Inf — not just special values
 3. **First-class Clang integration**: `-fsanitize=numerical` matches ASan/UBSan UX
 4. **Actionable diagnostics**: Reports source file, line, column, operation, actual vs shadow values

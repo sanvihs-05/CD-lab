@@ -81,7 +81,7 @@ start demo\nssan-dashboard.html
 |----------|----------|
 | [DESIGN.md](DESIGN.md) | Problem statement, shadow execution approach, design decisions, alternatives considered |
 | [IMPLEMENTATION.md](IMPLEMENTATION.md) | LLVM pass architecture, instrumented instructions, runtime library, Clang driver patches |
-| [EVALUATION.md](EVALUATION.md) | Test results (12/12 pass), benchmark overhead (~6.4×), tool comparison, failure case analysis |
+| [EVALUATION.md](EVALUATION.md) | Test results (12/12 pass), benchmark overhead (~6.1×), tool comparison, failure case analysis |
 
 ## What NSSan Detects
 
@@ -286,7 +286,7 @@ docker run --rm `
   nssan-test bash ./benchmark.sh
 ```
 
-**Geometric mean overhead: ~6.4× (vs Herbgrind's ~100×) — roughly 15× faster than Herbgrind**
+**Geometric mean overhead: ~6.1× (vs Herbgrind's ~100×) — roughly 16× faster than Herbgrind**
 
 ## Environment Variables
 

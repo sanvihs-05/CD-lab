@@ -2,7 +2,7 @@
 
 #define NX 50
 #define NY 50
-#define STEPS 12000
+#define STEPS 8000
 
 static float u[NX][NY];
 static float next_u[NX][NY];

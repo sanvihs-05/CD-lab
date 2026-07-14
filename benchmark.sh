@@ -6,12 +6,15 @@ CLANG_BIN="${CLANG_BIN:-/llvm-build/bin/clang}"
 OUT_DIR="${ROOT_DIR}/benchmarks/out"
 mkdir -p "${OUT_DIR}"
 
-"${ROOT_DIR}/scripts/install-native-nssan.sh" >/dev/null
+# The live playground installs the toolchain at warmup; let it skip the re-check.
+if [ "${NSSAN_SKIP_INSTALL:-0}" != "1" ]; then
+  "${ROOT_DIR}/scripts/install-native-nssan.sh" >/dev/null
+fi
 
 measure_average() {
   local output_file
   output_file="$(mktemp)"
-  for _ in 1 2 3 4 5; do
+  for _ in 1 2 3; do
     /usr/bin/time -f "%e" "$@" >/dev/null 2>>"${output_file}"
   done
   awk '{sum+=$1} END {printf "%.4f", sum/NR}' "${output_file}"
